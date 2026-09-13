@@ -217,24 +217,34 @@ export interface MatchResult {
  * Match a particulars string to the catalog:
  *   exact alias/canonical hit → high trigram score (≥0.72) → review band
  *   (0.50–0.71) → treated as new (<0.50).
+ *
+ * Angled inputs (ELBOW/BEND with "nX90"-style sizes) only ever auto-link to
+ * a material carrying the SAME angle: search_name doesn't include degrees,
+ * so text similarity alone can't tell "ELBOW 3X45" from "ELBOW 3X90".
  */
 export async function matchMaterial(particulars: string): Promise<MatchResult> {
   const hits = await searchMaterials(particulars, null).catch(() => [] as SearchHit[]);
 
   const norm = particulars.toUpperCase().replace(/\s+/g, " ").trim();
   const key = canonicalKey(norm);
+  const parsed = parseParticulars(particulars);
+  const angleAgrees = (h: SearchHit) =>
+    parsed.degrees === 0 || Number(h.degrees ?? 0) === parsed.degrees;
 
-  // Exact: a hit whose search_name (or PIPE-dropped twin) equals the input.
+  // Exact: a hit whose search_name (or PIPE-dropped twin) equals the input —
+  // and whose angle matches when the input carries one.
   const exact = hits.find(
-    (h) => h.search_name === norm || canonicalKey(h.search_name) === key,
+    (h) =>
+      angleAgrees(h) &&
+      (h.search_name === norm || canonicalKey(h.search_name) === key),
   );
   if (exact) return { material: exact as unknown as Material, confidence: "exact", candidates: hits };
 
-  const best = hits[0];
+  const best = hits.find(angleAgrees);
   if (best && best.score >= 0.72) {
     return { material: best as unknown as Material, confidence: "high", candidates: hits };
   }
-  if (best && best.score >= 0.5) {
+  if (hits[0] && hits[0].score >= 0.5) {
     return { material: null, confidence: "review", candidates: hits };
   }
   return { material: null, confidence: "new", candidates: hits };
