@@ -1,0 +1,10 @@
+node_modules
+dist
+release
+shots/*
+!shots/demo.html
+.env
+.env.local
+*.local
+*.log
+*.xlsx

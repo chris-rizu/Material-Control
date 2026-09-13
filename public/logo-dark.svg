@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Material Control — dark-background logo variant (light lines on navy) -->
+  <!-- hexagon -->
+  <path d="M32 5 L55 18.5 L55 45.5 L32 59 L9 45.5 L9 18.5 Z"
+        fill="rgba(255,255,255,0.05)" stroke="#dfe9f6" stroke-width="2.4" stroke-linejoin="round"/>
+  <!-- clipboard clip -->
+  <rect x="24" y="1.5" width="16" height="8" rx="2.5" fill="#dfe9f6"/>
+  <circle cx="32" cy="5.5" r="2.2" fill="#0b1524" stroke="#dfe9f6" stroke-width="1.6"/>
+  <!-- isometric open box -->
+  <g stroke="#dfe9f6" stroke-width="2" stroke-linejoin="round">
+    <path d="M17 27.5 L11 24 L25.5 15.5 L32 19 Z" fill="rgba(255,255,255,0.13)"/>
+    <path d="M32 19 L38.5 15.5 L53 24 L47 27.5 Z" fill="rgba(255,255,255,0.13)"/>
+    <path d="M32 19 L47 27.5 L32 36 L17 27.5 Z" fill="rgba(255,255,255,0.10)"/>
+    <path d="M17 27.5 L17 41 L32 49.5 L32 36 Z" fill="rgba(255,255,255,0.16)"/>
+    <path d="M47 27.5 L47 41 L32 49.5 L32 36 Z" fill="rgba(255,255,255,0.07)"/>
+  </g>
+  <!-- blue accent bars -->
+  <g fill="#4f8ef7">
+    <rect x="43.5" y="31" width="4" height="9" rx="1.4"/>
+    <rect x="49" y="27" width="4" height="13" rx="1.4"/>
+    <rect x="13" y="46" width="22" height="4.5" rx="1.6" transform="rotate(30 13 46)"/>
+  </g>
+</svg>
