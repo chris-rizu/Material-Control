@@ -3,9 +3,19 @@
 -- Paste into Supabase SQL Editor and Run (takes effect immediately, no data
 -- is changed — this only adds the material's structured fields to the view
 -- so the app can display "ELBOW 6 - 90°" correctly).
+--
+-- Uses DROP + CREATE inside a transaction: Postgres only allows new columns
+-- to be APPENDED by CREATE OR REPLACE VIEW, and this migration inserts the
+-- five material_* columns mid-list (42P16 otherwise). A view holds no data,
+-- so dropping it is safe; the transaction makes the swap atomic — the view
+-- is never absent, even for a millisecond.
 -- ============================================================================
 
-create or replace view public.purchases_flat with (security_invoker = true) as
+begin;
+
+drop view if exists public.purchases_flat;
+
+create view public.purchases_flat with (security_invoker = true) as
 select
   p.id, p.purchase_date, p.si_no,
   s.name  as supplier,
@@ -24,3 +34,8 @@ from public.purchases p
 left join public.suppliers  s on s.id = p.supplier_id
 left join public.categories c on c.id = p.category_id
 left join public.materials  m on m.id = p.material_id;
+
+-- keep access exactly as before (matches Supabase default privileges)
+grant select on public.purchases_flat to anon, authenticated;
+
+commit;
