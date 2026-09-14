@@ -84,6 +84,7 @@ export default function PurchasePage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [supId, setSupId] = useState<number | "">("");
+  const [proj, setProj] = useState("");
   const [status, setStatus] = useState("");
   const [cat, setCat] = useState<number | "">("");
   const [draft, setDraft] = useState<Draft>(emptyDraft);
@@ -124,12 +125,24 @@ export default function PurchasePage() {
 
   const rows = ledger.data ?? [];
 
+  // distinct project names for the toolbar dropdown (case-insensitive,
+  // first-seen casing kept, blanks never listed)
+  const projects = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of rows) {
+      const p = (r.project_name ?? "").trim();
+      if (p && !seen.has(p.toUpperCase())) seen.set(p.toUpperCase(), p);
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [rows]);
+
   const filtered = useMemo(() => {
     const needle = search.toUpperCase();
     const list = rows.filter((r) => {
       if (dateFrom && r.purchase_date < dateFrom) return false;
       if (dateTo && r.purchase_date > dateTo) return false;
       if (supId !== "" && r.supplier_id !== supId) return false;
+      if (proj !== "" && (r.project_name ?? "").trim().toUpperCase() !== proj.toUpperCase()) return false;
       if (cat !== "" && r.category_id !== cat) return false;
       if (status === "repaired" && r.amount_source !== "import_missing_filled") return false;
       if (status === "receipt" && r.amount_source !== "manual") return false;
@@ -145,13 +158,13 @@ export default function PurchasePage() {
     });
     list.sort((a, b) => comparePurchases(a, b, sortKey, sortDir));
     return list;
-  }, [rows, search, dateFrom, dateTo, supId, status, cat, sortKey, sortDir]);
+  }, [rows, search, dateFrom, dateTo, supId, proj, status, cat, sortKey, sortDir]);
 
-  const anyFilter = Boolean(search || dateFrom || dateTo || supId !== "" || status || cat !== "");
+  const anyFilter = Boolean(search || dateFrom || dateTo || supId !== "" || proj || status || cat !== "");
 
   function clearFilters() {
     setSearch(""); setDateFrom(""); setDateTo("");
-    setSupId(""); setStatus(""); setCat("");
+    setSupId(""); setProj(""); setStatus(""); setCat("");
   }
 
   const stats = useMemo(() => {
@@ -440,6 +453,12 @@ export default function PurchasePage() {
                   onChange={(e) => setSupId(e.target.value === "" ? "" : Number(e.target.value))}>
                   <option value="">All Suppliers</option>
                   {(sups.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div className="pp-seg" title="Filter by project">
+                <select value={proj} onChange={(e) => setProj(e.target.value)}>
+                  <option value="">All Projects</option>
+                  {projects.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
               <div className="pp-seg">

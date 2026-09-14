@@ -12,6 +12,7 @@ import { IconEye, IconSearch } from "../components/icons";
 export default function ReadOnlyPage() {
   const ledger = useQuery({ queryKey: ["ledger"], queryFn: fetchPurchasesFlat });
   const [search, setSearch] = useState("");
+  const [proj, setProj] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -26,19 +27,35 @@ export default function ReadOnlyPage() {
 
   const rows = ledger.data ?? [];
 
+  // distinct project names for the toolbar dropdown (case-insensitive,
+  // first-seen casing kept, blanks never listed)
+  const projects = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of rows) {
+      const p = (r.project_name ?? "").trim();
+      if (p && !seen.has(p.toUpperCase())) seen.set(p.toUpperCase(), p);
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [rows]);
+
   const filtered = useMemo(() => {
     const needle = search.toUpperCase();
-    const list = needle
-      ? rows.filter((r) =>
-          r.particulars_raw.toUpperCase().includes(needle) ||
-          (r.supplier ?? "").toUpperCase().includes(needle) ||
-          r.si_no.toUpperCase().includes(needle) ||
-          (r.project_name ?? "").toUpperCase().includes(needle) ||
-          (r.material ?? "").toUpperCase().includes(needle))
-      : [...rows];
+    const list = rows.filter((r) => {
+      if (proj !== "" && (r.project_name ?? "").trim().toUpperCase() !== proj.toUpperCase()) return false;
+      if (!needle) return true;
+      return (
+        r.particulars_raw.toUpperCase().includes(needle) ||
+        (r.supplier ?? "").toUpperCase().includes(needle) ||
+        r.si_no.toUpperCase().includes(needle) ||
+        (r.project_name ?? "").toUpperCase().includes(needle) ||
+        (r.material ?? "").toUpperCase().includes(needle)
+      );
+    });
     list.sort((a, b) => comparePurchases(a, b, sortKey, sortDir));
     return list;
-  }, [rows, search, sortKey, sortDir]);
+  }, [rows, search, proj, sortKey, sortDir]);
+
+  const anyFilter = Boolean(search || proj);
 
   const total = filtered.reduce((s, r) => s + Number(r.amount), 0);
 
@@ -72,6 +89,12 @@ export default function ReadOnlyPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+          <div className="pp-seg" title="Filter by project">
+            <select value={proj} onChange={(e) => setProj(e.target.value)}>
+              <option value="">All Projects</option>
+              {projects.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
         </div>
 
         <div className="pp-scroll">
@@ -100,9 +123,11 @@ export default function ReadOnlyPage() {
                   <div className="empty">
                     <IconEye size={40} />
                     <div className="e-title">
-                      {rows.length === 0 ? "No purchases recorded yet" : "Nothing matches this search"}
+                      {rows.length === 0 ? "No purchases recorded yet" : "Nothing matches these filters"}
                     </div>
-                    <div>{rows.length === 0 ? "Lines added in Purchases will appear here." : "Try a shorter search term."}</div>
+                    <div>{rows.length === 0
+                      ? "Lines added in Purchases will appear here."
+                      : "Try a shorter search term, or pick All Projects."}</div>
                   </div>
                 </td></tr>
               )}
@@ -127,7 +152,7 @@ export default function ReadOnlyPage() {
         </div>
 
         <div className="pp-foot">
-          <span className="muted small">{filtered.length} items{search ? " (filtered)" : ""}</span>
+          <span className="muted small">{filtered.length} items{anyFilter ? " (filtered)" : ""}</span>
           <span className="spacer" />
           <span className="muted small">Grand total</span>
           <span className="f-total">₱{php(total)}</span>
