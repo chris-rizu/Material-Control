@@ -36,11 +36,14 @@ export default function MaterialsPage() {
   return (
     <>
       <div className="page-head">
-        <div>
-          <h1>Materials</h1>
-          <div className="page-sub">
-            The structured catalog — grows automatically from every entry and import.
-            Click a row to see the typed variants (aliases) it remembers.
+        <div className="page-title">
+          <div className="page-icon"><IconBox size={22} /></div>
+          <div>
+            <h1>Materials</h1>
+            <div className="page-sub">
+              The structured catalog — grows automatically from every entry and import.
+              Click a row to see the typed variants (aliases) it remembers.
+            </div>
           </div>
         </div>
       </div>

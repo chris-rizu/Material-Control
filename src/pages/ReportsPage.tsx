@@ -65,9 +65,21 @@ export default function ReportsPage() {
           </div>
         </div>
       </div>
-      <SumTable rows={rows} keyOf={(r) => monthLabel(r.purchase_date)} label="Spend by month" />
-      <SumTable rows={rows} keyOf={(r) => r.supplier ?? "—"} label="Spend by supplier" />
-      <SumTable rows={rows} keyOf={(r) => r.category ?? "Uncategorized"} label="Spend by category" />
+      {rows.length === 0 ? (
+        <div className="card">
+          <div className="empty">
+            <IconReport size={40} />
+            <div className="e-title">Nothing to report yet</div>
+            <div>Reports fill in as you encode or import purchases.</div>
+          </div>
+        </div>
+      ) : (
+        <div className="reports-grid">
+          <div className="span-2"><SumTable rows={rows} keyOf={(r) => monthLabel(r.purchase_date)} label="Spend by month" /></div>
+          <SumTable rows={rows} keyOf={(r) => r.supplier ?? "—"} label="Spend by supplier" />
+          <SumTable rows={rows} keyOf={(r) => r.category ?? "Uncategorized"} label="Spend by category" />
+        </div>
+      )}
     </>
   );
 }

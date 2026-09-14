@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
 import { listProfiles, updateProfile } from "../lib/queries";
+import { IconUsers } from "../components/icons";
 import type { Role } from "../lib/types";
 
 /** Owner-only: manage staff roles and active flag. */
@@ -21,11 +22,14 @@ export default function AdminUsersPage() {
   return (
     <>
       <div className="page-head">
-        <div>
-          <h1>Users</h1>
-          <div className="page-sub">
-            <b>owner</b> = everything · <b>encoder</b> = encode + import · <b>viewer</b> = read-only.
-            New signups land as encoder. You cannot change your own role.
+        <div className="page-title">
+          <div className="page-icon"><IconUsers size={22} /></div>
+          <div>
+            <h1>Users</h1>
+            <div className="page-sub">
+              <b>owner</b> = everything · <b>encoder</b> = encode + import · <b>viewer</b> = read-only.
+              New signups land as encoder. You cannot change your own role.
+            </div>
           </div>
         </div>
       </div>

@@ -281,7 +281,7 @@ pre { background: var(--chip-bg); padding: 12px; overflow-x: auto; font-size: 12
 
 /* content */
 .content {
-  flex: 1; min-height: 0; overflow: hidden;
+  flex: 1; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column;
   padding: 20px 24px; width: 100%;
 }
@@ -760,6 +760,11 @@ td.actions { white-space: nowrap; text-align: right; }
   gap: 12px; flex-wrap: wrap; margin-top: 14px;
 }
 .imp-delta { color: var(--danger); font-weight: 700; }
+
+/* Reports: month table spans the row, supplier/category share it */
+.reports-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; align-items: start; }
+.reports-grid > .span-2 { grid-column: 1 / -1; }
+@media (max-width: 1100px) { .reports-grid { grid-template-columns: 1fr; } }
 
 /* --------------------------------------------------------------------------
    Login / setup
