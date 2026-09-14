@@ -34,6 +34,7 @@ interface Draft {
   date: string;
   si: string;
   supplier: string;
+  brand: string;
   particulars: string;
   project: string;
   price: string;
@@ -44,6 +45,7 @@ const emptyDraft = (): Draft => ({
   date: todayISO(),
   si: "",
   supplier: "",
+  brand: "",
   particulars: "",
   project: "",
   price: "",
@@ -229,15 +231,23 @@ export default function PurchasePage() {
       const price = Number(d.price);
       if (d.price === "" || Number.isNaN(price)) throw new Error("Type the unit price.");
       const qty = d.qty === "" ? 1 : Number(d.qty);
+      // the entry row's Brand box is optional: filled, it is prepended to the
+      // particulars ("MOLDEX" + "PVC TEE 3X3" -> "MOLDEX PVC TEE 3X3"); blank
+      // saves just the particulars. A particular that already starts with the
+      // brand (e.g. picked whole from the suggestions) is not doubled.
+      const b = d.brand.trim().toUpperCase().replace(/\s+/g, " ");
+      const base = d.particulars.trim();
+      const dupe = base.toUpperCase() === b || base.toUpperCase().startsWith(`${b} `);
+      const text = b && !dupe ? `${b} ${base}` : base;
 
       const supplier = await ensureSupplier(d.supplier.trim());
       let materialId: number | null = null;
       try {
-        const m = await matchMaterial(d.particulars);
+        const m = await matchMaterial(text);
         if (m.material) materialId = m.material.id;
         else if (cats.data) {
-          const cat = guessCategory(d.particulars, cats.data);
-          materialId = (await ensureMaterial(cat.id, parseParticulars(d.particulars), cat.unit)).id;
+          const cat = guessCategory(text, cats.data);
+          materialId = (await ensureMaterial(cat.id, parseParticulars(text), cat.unit)).id;
         }
       } catch { /* prediction is best-effort; the row still saves */ }
 
@@ -245,9 +255,9 @@ export default function PurchasePage() {
         purchase_date: d.date,
         si_no: d.si,
         supplier_id: supplier.id,
-        category_id: cats.data ? guessCategory(d.particulars, cats.data).id : null,
+        category_id: cats.data ? guessCategory(text, cats.data).id : null,
         material_id: materialId,
-        particulars_raw: d.particulars.trim(),
+        particulars_raw: text,
         project_name: d.project.trim(),
         unit_price: price,
         quantity: qty,
@@ -264,7 +274,7 @@ export default function PurchasePage() {
       setMsg(null);
       setSupForceNew(false);
       setSupSuggest(null);
-      setDraft((d) => ({ ...d, particulars: "", project: "", price: "", qty: "" }));
+      setDraft((d) => ({ ...d, brand: "", particulars: "", project: "", price: "", qty: "" }));
       setDraftMatId(null);
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
@@ -366,6 +376,7 @@ export default function PurchasePage() {
       date: r.purchase_date,
       si: r.si_no,
       supplier: r.supplier ?? "",
+      brand: "", // the edit row has no Brand box — particulars are edited as one line
       particulars: r.particulars_raw,
       project: r.project_name ?? "",
       price: String(Number(r.unit_price)),
@@ -501,6 +512,10 @@ export default function PurchasePage() {
                     }}
                   />
                 </div>
+                <input className="pp-f pp-brand" placeholder="Brand" title="Brand — optional"
+                  value={draft.brand}
+                  onChange={(e) => setDraft({ ...draft, brand: e.target.value })}
+                  onKeyDown={(e) => e.key === "Enter" && trySave()} />
                 <div className="pp-part">
                   <PredictiveMaterialInput
                     value={draft.particulars}
