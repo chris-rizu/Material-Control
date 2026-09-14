@@ -6,7 +6,7 @@ import type { Profile } from "../lib/types";
 import {
   IconInvoice, IconBox, IconTruck, IconReport, IconUpload,
   IconUsers, IconSettings, IconBell, IconChevronDown, IconLogout,
-  IconMenu, IconSun, IconMoon,
+  IconMenu, IconSun, IconMoon, IconEye, IconHistory,
 } from "./icons";
 
 function useDropdown<T extends HTMLElement>() {
@@ -67,12 +67,14 @@ export default function Layout({ profile }: { profile: Profile | null }) {
 
         <div className="nav-label">Daily</div>
         <NavLink end className="nav-item" to="/" title="Purchases"><IconInvoice size={17} /> <span className="nav-text">Purchases</span></NavLink>
+        <NavLink className="nav-item" to="/readonly" title="Read-Only"><IconEye size={17} /> <span className="nav-text">Read-Only</span></NavLink>
         {canWrite && <NavLink className="nav-item" to="/import" title="Import / Export"><IconUpload size={17} /> <span className="nav-text">Import / Export</span></NavLink>}
 
         <div className="nav-label">Catalog</div>
-        <NavLink className="nav-item" to="/materials" title="Materials"><IconBox size={17} /> <span className="nav-text">Materials</span></NavLink>
+        <NavLink className="nav-item" to="/materials" title="Particulars"><IconBox size={17} /> <span className="nav-text">Particulars</span></NavLink>
         <NavLink className="nav-item" to="/suppliers" title="Suppliers"><IconTruck size={17} /> <span className="nav-text">Suppliers</span></NavLink>
         <NavLink className="nav-item" to="/reports" title="Reports"><IconReport size={17} /> <span className="nav-text">Reports</span></NavLink>
+        <NavLink className="nav-item" to="/history" title="History"><IconHistory size={17} /> <span className="nav-text">History</span></NavLink>
         {isOwner && <NavLink className="nav-item" to="/admin" title="Users"><IconUsers size={17} /> <span className="nav-text">Users</span></NavLink>}
         <NavLink className="nav-item" to="/settings" title="Settings"><IconSettings size={17} /> <span className="nav-text">Settings</span></NavLink>
 

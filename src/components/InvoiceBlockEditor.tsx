@@ -41,6 +41,7 @@ export default function InvoiceBlockEditor({ categories, suppliers, userId }: Pr
     }).format(new Date()),
     si_no: "",
     supplier_id: null,
+    project_name: "",
     lines: [emptyLine()],
   }));
   const [supplierText, setSupplierText] = useState("");
@@ -59,7 +60,7 @@ export default function InvoiceBlockEditor({ categories, suppliers, userId }: Pr
     },
     onSuccess: (n) => {
       setMessage({ kind: "ok", text: `Saved ${n} line${n > 1 ? "s" : ""} · subtotal ₱${php(subtotal)}` });
-      setBlock((b) => ({ ...b, si_no: "", lines: [emptyLine()] }));
+      setBlock((b) => ({ ...b, si_no: "", project_name: "", lines: [emptyLine()] }));
       setSupplierText("");
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["materials"] });
@@ -135,6 +136,11 @@ export default function InvoiceBlockEditor({ categories, suppliers, userId }: Pr
             <datalist id="supplier-list">
               {suppliers.map((s) => <option key={s.id} value={s.name} />)}
             </datalist>
+          </label>
+          <label className="field">
+            Project name
+            <input value={block.project_name} placeholder="e.g. Mcdo, Talisay"
+              onChange={(e) => setBlock((b) => ({ ...b, project_name: e.target.value }))} />
           </label>
         </div>
       </div>

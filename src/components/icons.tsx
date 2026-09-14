@@ -38,6 +38,18 @@ export const IconBox = (p: P) => (
   <I {...p}><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" /><path d="M3.3 8.3L12 13l8.7-4.7M12 13v9" /></I>
 );
 
+export const IconEye = (p: P) => (
+  <I {...p}><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z" /><circle cx="12" cy="12" r="2.8" /></I>
+);
+
+export const IconHistory = (p: P) => (
+  <I {...p}><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5" /><path d="M3.5 3.5v5h5" /><path d="M12 7.5V12l3 2" /></I>
+);
+
+export const IconUndo = (p: P) => (
+  <I {...p}><path d="M9 14L4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 010 11H11" /></I>
+);
+
 export const IconTruck = (p: P) => (
   <I {...p}><path d="M1 5h13v11H1zM14 9h4l4 4v3h-8" /><circle cx="6" cy="18.5" r="1.8" /><circle cx="17.5" cy="18.5" r="1.8" /></I>
 );

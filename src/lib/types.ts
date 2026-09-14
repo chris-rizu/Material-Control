@@ -115,6 +115,19 @@ export interface PurchaseFlat {
   material_id: number | null;
   supplier_id: number | null;
   category_id: number | null;
+  project_name: string | null;
+}
+
+/** One row of the History tab (activity_log table). */
+export interface ActivityEntry {
+  id: number;
+  acted_at: string;
+  actor: string;
+  action: "insert" | "update" | "delete" | "restore";
+  table_name: "purchases" | "suppliers" | "materials";
+  row_id: number | null;
+  summary: string;
+  details: Record<string, unknown> | { old: Record<string, unknown>; new: Record<string, unknown> } | null;
 }
 
 export interface SearchHit extends Material {
@@ -137,6 +150,7 @@ export interface InvoiceBlock {
   purchase_date: string;
   si_no: string;
   supplier_id: number | null;
+  project_name: string;
   lines: LineItem[];
 }
 

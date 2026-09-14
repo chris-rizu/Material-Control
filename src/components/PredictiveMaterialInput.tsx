@@ -7,7 +7,7 @@ import type { SearchHit } from "../lib/types";
 interface Props {
   value: string;
   onChange: (text: string) => void;
-  /** Called when the user accepts a suggestion (null = keep raw text as new). */
+  /** Called when the user accepts a suggestion. */
   onPick: (hit: SearchHit | null) => void;
   categoryId?: number | null;
   placeholder?: string;
@@ -18,6 +18,9 @@ interface Props {
 /**
  * Predictive particulars input: debounced trigram search over the material
  * catalog + its alias history. Arrow keys + Enter accept; Esc closes.
+ * New particulars are NOT offered as a dropdown row — whatever is typed is
+ * saved with the row and auto-created (the Particulars tab manages the
+ * catalog itself).
  */
 export default function PredictiveMaterialInput({
   value, onChange, onPick, categoryId, placeholder, onEnter,
@@ -38,11 +41,7 @@ export default function PredictiveMaterialInput({
     enabled: open && debounced.trim().length >= 2,
   });
 
-  const showNew = debounced.trim().length >= 2;
-  const options: Array<{ hit: SearchHit | null; label: string }> = [
-    ...hits.map((h) => ({ hit: h as SearchHit, label: h.search_name })),
-    ...(showNew ? [{ hit: null, label: `Add “${debounced.trim()}” as a new material` }] : []),
-  ];
+  const options: SearchHit[] = hits;
 
   useEffect(() => setActive(0), [debounced]);
 
@@ -57,15 +56,13 @@ export default function PredictiveMaterialInput({
   function pick(i: number) {
     const opt = options[i];
     if (opt) {
-      if (opt.hit) {
-        // search_name omits degrees ("... ELBOW 3"), so putting it back in the
-        // box verbatim would let the row re-match the 45° twin at save time.
-        // Keep the angle in the text ("... ELBOW 3X90") — the parser reads it
-        // and the matcher then only accepts materials with the same degrees.
-        const deg = Number(opt.hit.degrees ?? 0);
-        onChange(deg > 0 ? `${opt.hit.search_name}X${deg}` : opt.hit.search_name);
-      }
-      onPick(opt.hit);
+      // search_name omits degrees ("... ELBOW 3"), so putting it back in the
+      // box verbatim would let the row re-match the 45° twin at save time.
+      // Keep the angle in the text ("... ELBOW 3X90") — the parser reads it
+      // and the matcher then only accepts materials with the same degrees.
+      const deg = Number(opt.degrees ?? 0);
+      onChange(deg > 0 ? `${opt.search_name}X${deg}` : opt.search_name);
+      onPick(opt);
     }
     setOpen(false);
   }
@@ -89,7 +86,7 @@ export default function PredictiveMaterialInput({
               // accept the suggestion (prefills price etc.); otherwise let Enter
               // fall through to the row-save handler.
               const opt = options[active];
-              if (opt && opt.hit && opt.hit.search_name === value.trim().toUpperCase()) {
+              if (opt && opt.search_name === value.trim().toUpperCase()) {
                 e.preventDefault();
                 pick(active);
                 return;
@@ -106,35 +103,26 @@ export default function PredictiveMaterialInput({
           <div className="dd-head">Suggestions from your history</div>
           {options.map((opt, i) => (
             <div
-              key={opt.hit ? `m${opt.hit.id}` : "new"}
-              className={`option ${i === active ? "active" : ""} ${opt.hit ? "" : "new"}`}
+              key={`m${opt.id}`}
+              className={`option ${i === active ? "active" : ""}`}
               onMouseDown={(e) => { e.preventDefault(); pick(i); }}
               onMouseEnter={() => setActive(i)}
             >
-              {opt.hit ? (
-                <>
-                  <div className="o-main">
-                    <div className="o-name">{opt.hit.search_name}</div>
-                    <div className="o-sub">
-                      {[
-                        opt.hit.brand || null,
-                        opt.hit.type || null,
-                        opt.hit.size_native || null,
-                        opt.hit.degrees ? `${opt.hit.degrees}°` : null,
-                      ].filter(Boolean).join(" · ")}
-                    </div>
-                  </div>
-                  {opt.hit.last_unit_price != null && (
-                    <span className="o-price">₱{Number(opt.hit.last_unit_price).toFixed(2)}</span>
-                  )}
-                  <span className="o-enter"><IconEnter size={15} /></span>
-                </>
-              ) : (
-                <div className="o-main">
-                  <div className="o-name">{opt.label}</div>
-                  <div className="o-sub">Nothing matches yet — press Enter to save it as typed</div>
+              <div className="o-main">
+                <div className="o-name">{opt.search_name}</div>
+                <div className="o-sub">
+                  {[
+                    opt.brand || null,
+                    opt.type || null,
+                    opt.size_native || null,
+                    opt.degrees ? `${opt.degrees}°` : null,
+                  ].filter(Boolean).join(" · ")}
                 </div>
+              </div>
+              {opt.last_unit_price != null && (
+                <span className="o-price">₱{Number(opt.last_unit_price).toFixed(2)}</span>
               )}
+              <span className="o-enter"><IconEnter size={15} /></span>
             </div>
           ))}
           <div className="dd-foot">

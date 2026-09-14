@@ -16,15 +16,19 @@ import ReportsPage from "./pages/ReportsPage";
 import ImportPage from "./pages/ImportPage";
 import AdminUsersPage from "./pages/AdminUsersPage";
 import SettingsPage from "./pages/SettingsPage";
+import ReadOnlyPage from "./pages/ReadOnlyPage";
+import HistoryPage from "./pages/HistoryPage";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
+      setSessionLoaded(true);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
@@ -33,6 +37,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Wait for the stored session first: deciding "signed out" before it
+    // loads bounced every reload through /login and back to Purchases.
+    if (!sessionLoaded) return;
     let alive = true;
     (async () => {
       if (!session) {
@@ -64,7 +71,9 @@ export default function App() {
         <Route element={<Layout profile={profile} />}>
           <Route path="/" element={<PurchasePage />} />
           <Route path="/ledger" element={<Navigate to="/" replace />} />
+          <Route path="/readonly" element={<ReadOnlyPage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/history" element={<HistoryPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/entry" element={<Guard session={session} profile={profile} roles={["owner", "encoder"]}><EntryPage /></Guard>} />
           <Route path="/materials" element={<MaterialsPage />} />

@@ -1,5 +1,6 @@
 // Formatting helpers. Money is PHP (the shop's currency); dates are plain
 // YYYY-MM-DD strings in the DB and rendered as-is (no timezone games).
+import type { PurchaseFlat } from "./types";
 
 export function php(n: number | null | undefined): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
@@ -41,4 +42,23 @@ export function monthLabel(iso: string): string {
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const m = Number(iso.slice(5, 7));
   return `${months[m - 1] ?? "?"} ${iso.slice(0, 4)}`;
+}
+
+/**
+ * Clean display text for the Particulars column, built from the structured
+ * material. Angled fittings render size and angle separately —
+ * "MOLDEX PVC ELBOW 6X90" displays as "MOLDEX PVC ELBOW 6 - 90°" —
+ * and typo'd raw text displays corrected (EMEREALD -> EMERALD).
+ */
+export function displayParticulars(r: PurchaseFlat): string {
+  const base = [r.material_brand, r.material_type, r.material_model_ver]
+    .map((x) => (x ?? "").trim())
+    .filter(Boolean)
+    .join(" ");
+  const size = (r.material_size_native ?? "").trim();
+  const deg = Number(r.material_degrees ?? 0);
+  if (!base && !size) return r.particulars_raw;
+  let out = [base, size].filter(Boolean).join(" ");
+  if (deg > 0) out = out ? `${out} - ${deg}°` : `${deg}°`;
+  return out || r.particulars_raw;
 }

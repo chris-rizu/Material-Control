@@ -149,6 +149,7 @@ export async function saveInvoiceBlock(block: InvoiceBlock, userId: string): Pro
     category_id: l.category_id,
     material_id: l.material_id,
     particulars_raw: l.particulars_raw,
+    project_name: (block.project_name ?? "").trim(),
     attributes: l.attributes,
     unit_price: l.unit_price === "" ? 0 : l.unit_price,
     quantity: l.quantity === "" ? 1 : l.quantity,
@@ -203,6 +204,27 @@ export async function recordImportBatch(
     .select("*").single();
   if (error) throw error;
   return data;
+}
+
+// --- history (activity log) ---------------------------------------------------
+
+/** Newest-first page of the activity log (what was added/changed/deleted). */
+export async function fetchActivity(limit = 100, offset = 0) {
+  const { data, error } = await supabase
+    .from("activity_log")
+    .select("*")
+    .order("acted_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(offset, offset + limit - 1);
+  if (error) throw error;
+  return (data ?? []) as import("./types").ActivityEntry[];
+}
+
+/** Put a deleted row back (owner/encoder only; enforced again server-side). */
+export async function restoreActivity(logId: number): Promise<string> {
+  const { data, error } = await supabase.rpc("restore_activity", { p_log_id: logId });
+  if (error) throw error;
+  return String(data ?? "Restored.");
 }
 
 // --- import material matching ----------------------------------------------

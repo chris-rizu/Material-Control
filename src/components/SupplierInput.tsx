@@ -1,6 +1,8 @@
-// Predictive supplier input: suggests existing suppliers while typing and
-// offers a deliberate "add new" path — so a typo shows "did you mean?"
-// instead of silently creating a bogus supplier.
+// Predictive supplier input: suggests existing suppliers while typing, so a
+// typo shows "did you mean?" instead of silently creating a bogus supplier.
+// New suppliers are NOT offered as a dropdown row — whatever is typed is
+// saved with the row and auto-created (the Suppliers tab manages the
+// directory itself).
 
 import { useEffect, useRef, useState } from "react";
 import { matchSuppliers } from "../lib/supplierMatch";
@@ -11,18 +13,14 @@ interface Props {
   onChange: (text: string) => void;
   /** Full supplier list (already loaded by the page). */
   suppliers: Supplier[];
-  /** Called when the user deliberately chooses "add as new supplier". */
-  onPickNew?: () => void;
   placeholder?: string;
   /** Extra key-down hook (Enter on the row). Only fires when the dropdown
    *  is not offering a suggestion to accept. */
   onEnter?: () => void;
 }
 
-type Opt = { kind: "supplier"; supplier: Supplier } | { kind: "new" };
-
 export default function SupplierInput({
-  value, onChange, suppliers, onPickNew, placeholder, onEnter,
+  value, onChange, suppliers, placeholder, onEnter,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -31,18 +29,17 @@ export default function SupplierInput({
   const q = value.trim();
   const { exact, candidates } = matchSuppliers(q, suppliers);
 
-  let options: Opt[];
+  let options: Supplier[];
   if (q.length === 0) {
     // nothing typed — show the known suppliers to pick from
-    options = suppliers.slice(0, 8).map((s) => ({ kind: "supplier", supplier: s }));
+    options = suppliers.slice(0, 8);
   } else {
     options = [];
-    if (exact) options.push({ kind: "supplier", supplier: exact });
+    if (exact) options.push(exact);
     for (const c of candidates) {
       if (exact && c.id === exact.id) continue;
-      options.push({ kind: "supplier", supplier: c });
+      options.push(c);
     }
-    if (!exact) options.push({ kind: "new" });
   }
 
   useEffect(() => setActive(0), [value]);
@@ -55,12 +52,8 @@ export default function SupplierInput({
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  function pick(opt: Opt) {
-    if (opt.kind === "supplier") {
-      onChange(opt.supplier.name);
-    } else {
-      onPickNew?.();
-    }
+  function pick(s: Supplier) {
+    onChange(s.name);
     setOpen(false);
   }
 
@@ -83,10 +76,9 @@ export default function SupplierInput({
           else if (e.key === "Enter") {
             if (open && options.length > 0) {
               const opt = options[active];
-              // Enter accepts the highlighted EXISTING supplier; for the
-              // "add new" row, Enter falls through to the row-save so the
-              // guard can confirm it first.
-              if (opt.kind === "supplier") { e.preventDefault(); pick(opt); return; }
+              // Enter accepts the highlighted EXISTING supplier; otherwise it
+              // falls through to the row-save so the guard can confirm first.
+              if (opt) { e.preventDefault(); pick(opt); return; }
             }
             onEnter?.();
           }
@@ -98,27 +90,17 @@ export default function SupplierInput({
         <div className="dropdown">
           {q.length === 0 && <div className="dd-head">All suppliers</div>}
           {hasCandidates && <div className="dd-warn">⚠ Not found — did you mean:</div>}
-          {!hasExact && q.length > 0 && candidates.length === 0 && (
-            <div className="dd-head">New supplier</div>
-          )}
           {options.map((opt, i) => (
             <div
-              key={opt.kind === "supplier" ? `s${opt.supplier.id}` : "new"}
-              className={`option ${i === active ? "active" : ""} ${opt.kind === "new" ? "new" : ""}`}
+              key={`s${opt.id}`}
+              className={`option ${i === active ? "active" : ""}`}
               onMouseDown={(e) => { e.preventDefault(); pick(opt); }}
               onMouseEnter={() => setActive(i)}
             >
-              {opt.kind === "supplier" ? (
-                <div className="o-main">
-                  <div className="o-name">{opt.supplier.name}</div>
-                  {hasCandidates && <div className="o-sub">existing supplier</div>}
-                </div>
-              ) : (
-                <div className="o-main">
-                  <div className="o-name">＋ Add new supplier: “{q}”</div>
-                  <div className="o-sub">only if this is really a new supplier</div>
-                </div>
-              )}
+              <div className="o-main">
+                <div className="o-name">{opt.name}</div>
+                {hasCandidates && <div className="o-sub">existing supplier</div>}
+              </div>
             </div>
           ))}
         </div>

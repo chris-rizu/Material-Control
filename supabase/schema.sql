@@ -258,6 +258,7 @@ create table if not exists public.purchases (
   category_id      bigint references public.categories(id) on delete set null,
   material_id      bigint references public.materials(id) on delete set null,
   particulars_raw  text not null default '',  -- exactly as typed / imported
+  project_name     text not null default '',  -- free text ("Mcdo", "Talisay")
   attributes       jsonb not null default '{}',
   unit_price       numeric(12,2) not null default 0 check (unit_price >= 0),
   quantity         numeric(12,3) not null default 1 check (quantity > 0),
@@ -445,7 +446,8 @@ select
   p.particulars_raw, p.attributes, p.unit_price, p.quantity, p.amount,
   p.amount_source, p.amount_recomputed, p.receipt_quality,
   p.line_seq, p.notes, p.created_at,
-  p.material_id, p.supplier_id, p.category_id
+  p.material_id, p.supplier_id, p.category_id,
+  p.project_name
 from public.purchases p
 left join public.suppliers  s on s.id = p.supplier_id
 left join public.categories c on c.id = p.category_id
@@ -535,5 +537,11 @@ insert into public.suppliers (name) values
   ('NEW MILLENIUM HARDWARE, INC.'),
   ('BELMONT HARDWARE DEPOT'),
   ('MAMA MARY HARDWARE'),
-  ('ATLAST BOLT FASTENERS CORP.')
+  ('ATLAS BOLT FASTENERS CORPORATION')
 on conflict (name) do nothing;
+
+-- ---------------------------------------------------------------------------
+-- NEXT: run migration_003_projects_history.sql (History tab: activity_log,
+-- audit triggers, restore_activity). It is idempotent, so it is safe on a
+-- fresh install that already has project_name from this file.
+-- ---------------------------------------------------------------------------

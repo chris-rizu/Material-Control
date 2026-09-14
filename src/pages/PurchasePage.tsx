@@ -4,6 +4,7 @@
 // (Totals, By Category donut, Recent Activity, Quick Actions).
 // Suppliers get a typo guard: typed name is matched against existing
 // suppliers, and a near-match asks "did you mean?" before creating anything.
+// Date and Project Name columns are sortable (click the header).
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,7 +18,8 @@ import { parseParticulars } from "../lib/parse";
 import { guessCategory } from "../lib/guess";
 import { matchSuppliers } from "../lib/supplierMatch";
 import { buildPurchasesWorkbook } from "../lib/excel";
-import { php, todayISO } from "../lib/format";
+import { displayParticulars, php, todayISO } from "../lib/format";
+import { comparePurchases, type SortDir, type SortKey } from "../lib/sort";
 import PredictiveMaterialInput from "../components/PredictiveMaterialInput";
 import SupplierInput from "../components/SupplierInput";
 import {
@@ -33,6 +35,7 @@ interface Draft {
   si: string;
   supplier: string;
   particulars: string;
+  project: string;
   price: string;
   qty: string;
 }
@@ -42,6 +45,7 @@ const emptyDraft = (): Draft => ({
   si: "",
   supplier: "",
   particulars: "",
+  project: "",
   price: "",
   qty: "",
 });
@@ -55,25 +59,6 @@ function relTime(iso: string): string {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
-}
-
-/**
- * Clean display text for the Particulars column, built from the structured
- * material. Angled fittings render size and angle separately —
- * "MOLDEX PVC ELBOW 6X90" displays as "MOLDEX PVC ELBOW 6 - 90°" —
- * and typo'd raw text displays corrected (EMEREALD -> EMERALD).
- */
-function displayParticulars(r: PurchaseFlat): string {
-  const base = [r.material_brand, r.material_type, r.material_model_ver]
-    .map((x) => (x ?? "").trim())
-    .filter(Boolean)
-    .join(" ");
-  const size = (r.material_size_native ?? "").trim();
-  const deg = Number(r.material_degrees ?? 0);
-  if (!base && !size) return r.particulars_raw;
-  let out = [base, size].filter(Boolean).join(" ");
-  if (deg > 0) out = out ? `${out} - ${deg}°` : `${deg}°`;
-  return out || r.particulars_raw;
 }
 
 export default function PurchasePage() {
@@ -110,6 +95,9 @@ export default function PurchasePage() {
   const [editMatId, setEditMatId] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [exporting, setExporting] = useState(false);
+  // sortable headers (Date, Project Name) — newest-first by default
+  const [sortKey, setSortKey] = useState<SortKey>("date");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [railOpen, setRailOpen] = useState(() => {
     try { return localStorage.getItem("mc-rail") !== "hidden"; } catch { return true; }
   });
@@ -120,8 +108,16 @@ export default function PurchasePage() {
       return next;
     });
   }
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "date" ? "desc" : "asc");
+    }
+  }
 
-  // supplier typo guard: set when the user deliberately chose "add as new"
+  // supplier typo guard: set when the user confirms a brand-new supplier name
   const [supForceNew, setSupForceNew] = useState(false);
   const [supSuggest, setSupSuggest] = useState<{ typed: string; candidates: Supplier[] } | null>(null);
   const [editSupNew, setEditSupNew] = useState(false);
@@ -143,14 +139,13 @@ export default function PurchasePage() {
         r.particulars_raw.toUpperCase().includes(needle) ||
         (r.supplier ?? "").toUpperCase().includes(needle) ||
         r.si_no.toUpperCase().includes(needle) ||
+        (r.project_name ?? "").toUpperCase().includes(needle) ||
         (r.material ?? "").toUpperCase().includes(needle)
       );
     });
-    // newest first, so what you just typed appears right under the entry row
-    list.sort((a, b) =>
-      a.purchase_date === b.purchase_date ? b.id - a.id : a.purchase_date < b.purchase_date ? 1 : -1);
+    list.sort((a, b) => comparePurchases(a, b, sortKey, sortDir));
     return list;
-  }, [rows, search, dateFrom, dateTo, supId, status, cat]);
+  }, [rows, search, dateFrom, dateTo, supId, status, cat, sortKey, sortDir]);
 
   const anyFilter = Boolean(search || dateFrom || dateTo || supId !== "" || status || cat !== "");
 
@@ -240,6 +235,7 @@ export default function PurchasePage() {
         category_id: cats.data ? guessCategory(d.particulars, cats.data).id : null,
         material_id: materialId,
         particulars_raw: d.particulars.trim(),
+        project_name: d.project.trim(),
         unit_price: price,
         quantity: qty,
         amount_source: "computed",
@@ -255,7 +251,7 @@ export default function PurchasePage() {
       setMsg(null);
       setSupForceNew(false);
       setSupSuggest(null);
-      setDraft((d) => ({ ...d, particulars: "", price: "", qty: "" }));
+      setDraft((d) => ({ ...d, particulars: "", project: "", price: "", qty: "" }));
       setDraftMatId(null);
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
@@ -323,6 +319,7 @@ export default function PurchasePage() {
         si_no: d.si,
         supplier_id: supplier.id,
         particulars_raw: d.particulars.trim(),
+        project_name: d.project.trim(),
         unit_price: price,
         quantity: qty,
         amount: Math.round(price * qty * 100) / 100,
@@ -357,6 +354,7 @@ export default function PurchasePage() {
       si: r.si_no,
       supplier: r.supplier ?? "",
       particulars: r.particulars_raw,
+      project: r.project_name ?? "",
       price: String(Number(r.unit_price)),
       qty: String(Number(r.quantity)),
     });
@@ -396,6 +394,9 @@ export default function PurchasePage() {
   const draftAmount =
     Math.round((Number(draft.price) || 0) * (draft.qty === "" ? 1 : Number(draft.qty)) * 100) / 100;
 
+  const sortInd = (key: SortKey) =>
+    sortKey === key ? <span className="sort-ind">{sortDir === "asc" ? "▲" : "▼"}</span> : null;
+
   return (
     <>
       <div className="page-head">
@@ -422,7 +423,7 @@ export default function PurchasePage() {
                 <IconSearch size={16} />
                 <input
                   value={search}
-                  placeholder="Search by SI#, supplier, item, or particulars..."
+                  placeholder="Search by SI#, supplier, item, project, or particulars..."
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
@@ -473,7 +474,6 @@ export default function PurchasePage() {
                     value={draft.supplier}
                     suppliers={sups.data ?? []}
                     placeholder="Select supplier"
-                    onPickNew={() => setSupForceNew(true)}
                     onEnter={() => void trySave()}
                     onChange={(t) => {
                       setDraft({ ...draft, supplier: t });
@@ -501,6 +501,9 @@ export default function PurchasePage() {
                     onEnter={() => void trySave()}
                   />
                 </div>
+                <input className="pp-f pp-proj" placeholder="Project" value={draft.project}
+                  onChange={(e) => setDraft({ ...draft, project: e.target.value })}
+                  onKeyDown={(e) => e.key === "Enter" && trySave()} />
                 <input className="pp-f pp-num" type="number" step="0.01" placeholder="Unit Price" value={draft.price}
                   onChange={(e) => setDraft({ ...draft, price: e.target.value })}
                   onKeyDown={(e) => e.key === "Enter" && trySave()} />
@@ -519,10 +522,17 @@ export default function PurchasePage() {
               <table className="pp-table">
                 <thead>
                   <tr>
-                    <th style={{ width: "11%" }}>Date</th>
-                    <th style={{ width: "12%" }}>SI#</th>
-                    <th style={{ width: "19%" }}>Supplier</th>
-                    <th style={{ width: "24%" }}>Particulars</th>
+                    <th className="sortable" style={{ width: "11%" }} onClick={() => toggleSort("date")}
+                      title="Sort by date">
+                      Date {sortInd("date")}
+                    </th>
+                    <th style={{ width: "11%" }}>SI#</th>
+                    <th style={{ width: "17%" }}>Supplier</th>
+                    <th style={{ width: "21%" }}>Particulars</th>
+                    <th className="sortable" style={{ width: "10%" }} onClick={() => toggleSort("project")}
+                      title="Sort by project name">
+                      Project {sortInd("project")}
+                    </th>
                     <th className="num" style={{ width: "9.5%" }}>Unit Price</th>
                     <th className="num" style={{ width: "6%" }}>Qty</th>
                     <th className="num" style={{ width: "10.5%" }}>Subtotal</th>
@@ -531,7 +541,7 @@ export default function PurchasePage() {
                 </thead>
                 <tbody>
                   {filtered.length === 0 && (
-                    <tr><td colSpan={canWrite ? 8 : 7}>
+                    <tr><td colSpan={canWrite ? 9 : 8}>
                       <div className="empty">
                         <IconInvoice size={40} />
                         <div className="e-title">
@@ -565,7 +575,6 @@ export default function PurchasePage() {
                           ? <SupplierInput
                               value={d!.supplier}
                               suppliers={sups.data ?? []}
-                              onPickNew={() => setEditSupNew(true)}
                               onChange={(t) => {
                                 setEditDraft({ ...d!, supplier: t });
                                 setEditSupNew(false);
@@ -599,6 +608,10 @@ export default function PurchasePage() {
                               {r.amount_source === "import_missing_filled" && <span className="chip brand">repaired</span>}
                               {r.amount_source === "manual" && <span className="chip">receipt</span>}
                             </>}</td>
+                        <td title={r.project_name ?? ""}>{editing
+                          ? <input value={d!.project} placeholder="—"
+                              onChange={(e) => setEditDraft({ ...d!, project: e.target.value })} />
+                          : (r.project_name || <span className="muted">—</span>)}</td>
                         <td className="num">{editing
                           ? <input className="mono" type="number" step="0.01" value={d!.price} onChange={(e) => setEditDraft({ ...d!, price: e.target.value })} />
                           : `₱${php(Number(r.unit_price))}`}</td>
@@ -760,7 +773,7 @@ export default function PurchasePage() {
                 <IconDownload size={16} /> Export to Excel <span className="qa-arrow"><IconArrowRight size={15} /></span>
               </button>
               <button className="qa" onClick={() => navigate("/materials")}>
-                <IconBox size={16} /> View All Materials <span className="qa-arrow"><IconArrowRight size={15} /></span>
+                <IconBox size={16} /> View All Particulars <span className="qa-arrow"><IconArrowRight size={15} /></span>
               </button>
               {me.data?.role === "owner" && (
                 <button className="qa" onClick={() => navigate("/admin")}>

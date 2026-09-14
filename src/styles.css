@@ -467,6 +467,7 @@ td.actions { white-space: nowrap; text-align: right; }
 .chip.brand { background: var(--primary-soft); border-color: var(--primary-soft); color: var(--primary); }
 .chip.warn { background: var(--warn-bg); border-color: var(--warn-bg); color: var(--warn); }
 .chip.bad  { background: var(--danger-bg); border-color: var(--danger-bg); color: var(--danger); }
+.chip.ok   { background: var(--ok-bg); border-color: var(--ok-bg); color: var(--ok-text); }
 
 .banner { padding: 11px 14px; margin: 12px 0; font-weight: 500; }
 .banner.ok { background: var(--ok-bg); color: var(--ok-text); }
@@ -681,6 +682,10 @@ td.actions { white-space: nowrap; text-align: right; }
   overflow: visible; text-overflow: clip; padding-right: 6px;
 }
 .pp-table td.actions .iconbtn { padding: 5px; }
+/* click-to-sort headers (Date, Project) */
+.pp-table thead th.sortable { cursor: pointer; user-select: none; }
+.pp-table thead th.sortable:hover { color: var(--primary); }
+.sort-ind { font-size: 9px; margin-left: 3px; color: var(--primary); }
 
 .pp-draft {
   border-bottom: 2px solid var(--primary);
@@ -696,6 +701,7 @@ td.actions { white-space: nowrap; text-align: right; }
 .pp-part { flex: 2.5 1 0; min-width: 0; }
 .pp-num { flex: 1 1 0; min-width: 0; text-align: right; }
 .pp-qty { flex: 0.6 1 0; min-width: 0; }
+.pp-proj { flex: 1 1 0; min-width: 0; }
 .pp-draft .amount-preview { flex: 0 0 auto; min-width: 0; text-align: right; padding: 0 2px; }
 .pp-add { flex: 0 0 auto; padding: 7.5px 14px; }
 .pp-draft .predictive .dropdown,
@@ -770,10 +776,21 @@ td.actions { white-space: nowrap; text-align: right; }
 }
 .imp-delta { color: var(--danger); font-weight: 700; }
 
-/* Reports: month table spans the row, supplier/category share it */
-.reports-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; align-items: start; }
-.reports-grid > .span-2 { grid-column: 1 / -1; }
-@media (max-width: 1100px) { .reports-grid { grid-template-columns: 1fr; } }
+/* Reports: one report at a time, picked with the tab buttons */
+.rep-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.rep-tabs button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* History: activity rows */
+.hist-list { display: flex; flex-direction: column; }
+.hist-row { display: flex; align-items: center; gap: 12px; padding: 10px 2px; }
+.hist-row + .hist-row { border-top: 1px solid var(--line); }
+.hist-row .chip { width: 72px; justify-content: center; margin-right: 0; flex: 0 0 auto; }
+.hist-main { flex: 1; min-width: 0; }
+.hist-summary { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hist-sub { color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+.hist-when { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.hist-restore { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 12.5px; flex: 0 0 auto; }
+.hist-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 12px; }
 
 /* --------------------------------------------------------------------------
    Login / setup
@@ -802,21 +819,26 @@ td.actions { white-space: nowrap; text-align: right; }
    -------------------------------------------------------------------------- */
 
 @media (max-width: 1280px) {
+  /* Stack the rail under the table. The shell / main-col keep their 100vh
+     height and .content keeps overflow-y: auto — overriding those here is
+     what broke scrolling whenever the window was narrower than 1280px. */
   .cols { flex-direction: column; flex: none; }
-  .content { overflow: visible; }
-  .main-col, .shell { height: auto; }
   .cols > .main { flex: 0 0 auto; }
   .rail { width: 100%; flex: 0 0 auto; overflow: visible; }
   .pp-card { min-height: auto; }
-  .pp-scroll { max-height: 62vh; min-height: 200px; }
-  /* pixel column widths: money and dates never truncate at this size */
+  /* the table fills most of the window here, so once it reaches its end the
+     wheel must carry on scrolling the page (contain trapped it) */
+  .pp-scroll { max-height: 62vh; min-height: 200px; overscroll-behavior: auto; }
+  /* pixel column widths: money and dates never truncate at this size
+     (4 = Particulars takes the rest) */
   .pp-table th:nth-child(1) { width: 100px; }
-  .pp-table th:nth-child(2) { width: 118px; }
+  .pp-table th:nth-child(2) { width: 110px; }
   .pp-table th:nth-child(3) { width: 150px; }
-  .pp-table th:nth-child(5) { width: 92px; }
-  .pp-table th:nth-child(6) { width: 52px; }
-  .pp-table th:nth-child(7) { width: 100px; }
-  .pp-table th:nth-child(8) { width: 64px; }
+  .pp-table th:nth-child(5) { width: 110px; }
+  .pp-table th:nth-child(6) { width: 92px; }
+  .pp-table th:nth-child(7) { width: 52px; }
+  .pp-table th:nth-child(8) { width: 100px; }
+  .pp-table th:nth-child(9) { width: 64px; }
 }
 
 @media (max-width: 900px) {

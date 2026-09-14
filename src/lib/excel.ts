@@ -1,13 +1,15 @@
 // Excel I/O: read the legacy PURCHASES workbook into blocks, and write the
-// ledger back out in the same layout ("can be opened in Excel").
-// exceljs is loaded lazily by the Import/Export pages to keep startup fast.
+// ledger back out in the SAME layout as PURCHASES (1).xlsx ("can be opened in
+// Excel"): 7 columns, every cell center-aligned, dates as long dates, money
+// in the accounting format, block headers forward-filled. Nothing sits to the
+// right of AMOUNT. exceljs is loaded lazily to keep startup fast.
 
 import type ExcelJSNS from "exceljs";
 
 export const ACCOUNTING_FMT = '_-* #,##0.00_-;\\-* #,##0.00_-;_-* "-"??_-;_-@_-';
 export const LONG_DATE_FMT = "[$-F800]dddd\\,\\ mmmm\\ dd\\,\\ yyyy";
 
-export const COL_WIDTHS = [32.53, 16.73, 30.6, 54.27, 18.13, 14.0, 16.33, 9.86];
+export const COL_WIDTHS = [32.53, 16.73, 30.6, 54.27, 18.13, 14.0, 16.33];
 export const HEADERS = [
   "DATE", "INVOICE/RECEIPT", "SUPPLIER'S NAME", "PARTICULARS",
   "UNIT PRICE", "QUANTITY", "AMOUNT",
@@ -248,24 +250,33 @@ export interface ExportRow {
   line_seq: number;
 }
 
-/** Build the PURCHASES-layout workbook from flat ledger rows. Returns a Blob. */
+/**
+ * Build the PURCHASES-layout workbook from flat ledger rows. Returns a Blob.
+ * Mirrors PURCHASES (1).xlsx exactly: title in A1, headers on row 3, data from
+ * row 4 with the date / SI / supplier typed only on the first line of each
+ * invoice block, every cell center-aligned, accounting number formats — and
+ * nothing to the right of AMOUNT.
+ */
 export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
   const ExcelJS = (await import("exceljs")).default ?? (await import("exceljs"));
   const wb = new ExcelJS.Workbook();
   wb.creator = "Material Control";
   const ws = wb.addWorksheet("Sheet1");
 
-  ws.getColumn(1).width = COL_WIDTHS[0];
-  for (let i = 2; i <= 8; i++) ws.getColumn(i).width = COL_WIDTHS[i - 1];
+  // column widths + column-wide styles, exactly like the original file
+  for (let i = 1; i <= COL_WIDTHS.length; i++) {
+    const col = ws.getColumn(i);
+    col.width = COL_WIDTHS[i - 1];
+    col.alignment = { horizontal: "center" };
+    if (i === 1) col.numFmt = LONG_DATE_FMT;
+    if (i === 5 || i === 7) col.numFmt = ACCOUNTING_FMT;
+  }
 
-  // Title (row 1) and headers (row 3) — same rows as the original file.
+  // Title (row 1) and headers (row 3) — same rows, plain centered text.
   ws.getCell("A1").value = "PURCHASES";
-  ws.getCell("A1").font = { bold: true, size: 14 };
   const headerRow = ws.getRow(3);
   HEADERS.forEach((h, i) => {
-    const c = headerRow.getCell(i + 1);
-    c.value = h;
-    c.font = { bold: true };
+    headerRow.getCell(i + 1).value = h;
   });
 
   let r = 4;
@@ -274,20 +285,15 @@ export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
     const blockStart = i;
     const key = (x: ExportRow) => `${x.purchase_date}|${x.si_no}|${x.supplier ?? ""}`;
     while (i < rows.length && key(rows[i]) === key(rows[blockStart])) i++;
-    const blockEnd = i - 1; // inclusive
 
     const blockRows = rows.slice(blockStart, i);
-    const subtotal = rows
-      .slice(blockStart, blockEnd + 1)
-      .reduce((s, x) => s + Number(x.amount), 0);
-
-    for (let k = 0; k < blockRows.length; k++) {
-      const x = blockRows[k];
+    for (const x of blockRows) {
       const row = ws.getRow(r);
-      if (k === 0) {
+      if (x === blockRows[0]) {
+        // UTC midnight: exceljs serializes Dates as UTC, so a local-midnight
+        // Date in Manila (UTC+8) would land on the PREVIOUS day in Excel
         const [y, m, d] = x.purchase_date.slice(0, 10).split("-").map(Number);
-        row.getCell(1).value = new Date(y, m - 1, d);
-        row.getCell(1).numFmt = LONG_DATE_FMT;
+        row.getCell(1).value = new Date(Date.UTC(y, m - 1, d));
         row.getCell(2).value = x.si_no;
         row.getCell(3).value = x.supplier ?? "";
       }
@@ -295,12 +301,6 @@ export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
       row.getCell(5).value = Number(x.unit_price);
       row.getCell(6).value = Number(x.quantity);
       row.getCell(7).value = Number(x.amount);
-      for (const col of [5, 7]) row.getCell(col).numFmt = ACCOUNTING_FMT;
-      if (k === blockRows.length - 1) {
-        const h = row.getCell(8);
-        h.value = Math.round(subtotal * 100) / 100;
-        h.numFmt = ACCOUNTING_FMT;
-      }
       r++;
     }
   }
