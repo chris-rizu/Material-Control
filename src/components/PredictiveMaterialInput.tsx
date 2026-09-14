@@ -10,6 +10,10 @@ interface Props {
   /** Called when the user accepts a suggestion. */
   onPick: (hit: SearchHit | null) => void;
   categoryId?: number | null;
+  /** When set (the entry row's Brand box), suggestions are searched as
+   *  "BRAND + typed" — picking one puts only the brand-less remainder in the
+   *  box, and the row save prepends the brand exactly once. */
+  brandPrefix?: string;
   placeholder?: string;
   /** Extra key-down hook (e.g. Enter saves the whole row). */
   onEnter?: () => void;
@@ -23,7 +27,7 @@ interface Props {
  * catalog itself).
  */
 export default function PredictiveMaterialInput({
-  value, onChange, onPick, categoryId, placeholder, onEnter,
+  value, onChange, onPick, categoryId, brandPrefix, placeholder, onEnter,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [debounced, setDebounced] = useState("");
@@ -36,8 +40,9 @@ export default function PredictiveMaterialInput({
   }, [value]);
 
   const { data: hits = [] } = useQuery({
-    queryKey: ["material-search", debounced, categoryId ?? null],
-    queryFn: () => searchMaterials(debounced, categoryId ?? null),
+    queryKey: ["material-search", debounced, categoryId ?? null, brandPrefix ?? ""],
+    queryFn: () =>
+      searchMaterials(brandPrefix ? `${brandPrefix} ${debounced}` : debounced, categoryId ?? null),
     enabled: open && debounced.trim().length >= 2,
   });
 
@@ -61,7 +66,13 @@ export default function PredictiveMaterialInput({
       // Keep the angle in the text ("... ELBOW 3X90") — the parser reads it
       // and the matcher then only accepts materials with the same degrees.
       const deg = Number(opt.degrees ?? 0);
-      onChange(deg > 0 ? `${opt.search_name}X${deg}` : opt.search_name);
+      let name = deg > 0 ? `${opt.search_name}X${deg}` : opt.search_name;
+      // with a brand box in play, the box keeps only the brand-less remainder
+      if (brandPrefix) {
+        const p = `${brandPrefix.trim().toUpperCase().replace(/\s+/g, " ")} `;
+        if (name.toUpperCase().startsWith(p)) name = name.slice(p.length);
+      }
+      onChange(name);
       onPick(opt);
     }
     setOpen(false);
@@ -82,11 +93,13 @@ export default function PredictiveMaterialInput({
           else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
           else if (e.key === "Enter") {
             if (open && options.length > 0 && debounced.trim().length >= 2) {
-              // If the exact typed text matches the highlighted suggestion's name,
-              // accept the suggestion (prefills price etc.); otherwise let Enter
-              // fall through to the row-save handler.
+              // If the exact typed text matches the highlighted suggestion's name
+              // (with the brand box, "BRAND + typed"), accept the suggestion
+              // (prefills price etc.); otherwise let Enter fall through to the
+              // row-save handler.
               const opt = options[active];
-              if (opt && opt.search_name === value.trim().toUpperCase()) {
+              const typedFull = (brandPrefix ? `${brandPrefix} ${value}` : value).trim().toUpperCase();
+              if (opt && opt.search_name === typedFull) {
                 e.preventDefault();
                 pick(active);
                 return;

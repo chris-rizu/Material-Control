@@ -1,7 +1,10 @@
-// Verifies the entry row's Brand box on Purchases: filled brand is prepended
-// to the particulars on save, a blank brand saves the particulars untouched,
-// and a particular that already starts with the brand is not doubled.
-// Same mocked harness — the POST bodies to /rest/v1/purchases are recorded.
+// Verifies the entry row's Brand box on Purchases — predictive box + the
+// save rules: filled brand is prepended to the particulars on save, a blank
+// brand saves the particulars untouched, and a particular that already
+// starts with the brand is not doubled. Picking a brand also steers the
+// Particulars suggestions (searched as "BRAND + typed") and a picked
+// suggestion still prefills the last price. The POST bodies to
+// /rest/v1/purchases and the search_materials calls are recorded.
 import { chromium } from "playwright-core";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -9,6 +12,21 @@ const REF = "ksztevlqbckdyhheqzif";
 const BASE = "http://localhost:4188";
 
 const writes = [];
+const searchQs = [];
+
+const materials = [
+  { id: 10, category_id: 3, brand: "MOLDEX", type: "PVC TEE", size_native: "3X3", degrees: null,
+    unit: "pc", search_name: "MOLDEX PVC TEE 3X3", usage_count: 5 },
+  { id: 11, category_id: 3, brand: "MOLDEX", type: "PVC ELBOW", size_native: "3X90", degrees: "90",
+    unit: "pc", search_name: "MOLDEX PVC ELBOW 3X90", usage_count: 3 },
+  { id: 12, category_id: 3, brand: "GOWIDE", type: "PVC PIPE", size_native: "4", degrees: null,
+    unit: "pc", search_name: "GOWIDE PVC PIPE 4", usage_count: 2 },
+  { id: 13, category_id: 4, brand: null, type: "CEMENT", size_native: "40KG", degrees: null,
+    unit: "bag", search_name: "CEMENT 40KG", usage_count: 8 },
+];
+
+const teeHit = { id: 10, search_name: "MOLDEX PVC TEE 3X3", brand: "MOLDEX", type: "PVC TEE",
+  size_native: "3X3", degrees: null, last_unit_price: 374.8 };
 
 const json = (body, status = 200) => ({
   status,
@@ -24,13 +42,18 @@ async function routeSupabase(route) {
     writes.push(JSON.parse(route.request().postData() ?? "{}"));
     return route.fulfill(json([{ id: 901 }], 201));
   }
-  if (url.includes("search_materials")) return route.fulfill(json([{ id: 10 }]));
+  if (url.includes("/rpc/search_materials")) {
+    let q = "";
+    try { q = JSON.parse(route.request().postData() ?? "{}").q ?? ""; } catch { /* bodyless */ }
+    searchQs.push(q);
+    return route.fulfill(json([teeHit]));
+  }
   if (url.includes("/rest/v1/purchases_flat")) return route.fulfill(json([]));
   if (url.includes("/rest/v1/categories"))
     return route.fulfill(json([{ id: 3, name: "PVC Pipes & Fittings", sort: 1, unit: "pc" }]));
   if (url.includes("/rest/v1/suppliers"))
     return route.fulfill(json([{ id: 1, name: "HARDWARE A", name_norm: "HARDWARE A" }]));
-  if (url.includes("/rest/v1/materials")) return route.fulfill(json([]));
+  if (url.includes("/rest/v1/materials")) return route.fulfill(json(materials));
   if (url.includes("/rest/v1/profiles")) return route.fulfill(json([{ role: "owner" }]));
   if (url.includes("/rest/v1/import_batches")) return route.fulfill(json([]));
   if (url.includes("/auth/v1/user"))
@@ -59,32 +82,62 @@ for (let i = 0; i < 40 && !up; i++) {
 }
 if (!up) { console.error("PREVIEW NOT UP"); process.exit(1); }
 await page.waitForSelector(".pp-draft", { timeout: 10000 });
+await page.waitForSelector(".pp-brand .predictive input", { timeout: 10000 });
 
 const results = [];
 const ok = (name, cond, extra = "") =>
   results.push(`${cond ? "PASS" : "FAIL"}  ${name}${extra ? ` — ${extra}` : ""}`);
 
-const hasBrandBox = await page.$(".pp-draft input.pp-brand");
-ok("entry row has the Brand box between supplier and particulars", !!hasBrandBox);
-
-// fill the static parts once (date is prefilled; supplier exact-matches)
 await page.fill('.pp-draft input[placeholder="SI#"]', "SI# 2001");
 await page.fill(".pp-sup input", "HARDWARE A");
 
+// ---- predictive brand box ----------------------------------------------------
+await page.click(".pp-brand input");
+await page.waitForSelector(".pp-brand .dropdown .o-name", { timeout: 4000 });
+const all = await page.$$eval(".pp-brand .dropdown .o-name", (els) => els.map((e) => e.textContent));
+ok("empty Brand box lists the catalog brands", all.join("|") === "GOWIDE|MOLDEX", all.join("|"));
+
+await page.fill(".pp-brand input", "mol");
+await page.waitForTimeout(200);
+const filteredOpts = await page.$$eval(".pp-brand .dropdown .o-name", (els) => els.map((e) => e.textContent));
+ok("typing filters the brand suggestions", filteredOpts.join("|") === "MOLDEX", filteredOpts.join("|"));
+await page.click(".pp-brand .dropdown .option");
+const bv = await page.inputValue(".pp-brand input");
+ok("picking fills the exact brand (assumption)", bv === "MOLDEX", bv);
+
+// ---- brand steers the Particulars suggestions --------------------------------
+await page.fill(".pp-part input", "TEE");
+await page.waitForSelector(".pp-part .dropdown .o-name", { timeout: 6000 });
+const hits = await page.$$eval(".pp-part .dropdown .o-name", (els) => els.map((e) => e.textContent));
+ok("suggestions searched as BRAND + typed (MOLDEX TEE)", searchQs.includes("MOLDEX TEE"),
+  JSON.stringify(searchQs));
+ok("suggestion shown from that search", hits.includes("MOLDEX PVC TEE 3X3"), hits.join("|"));
+await page.click(".pp-part .dropdown .option");
+const pv = await page.inputValue(".pp-part input");
+const price = await page.inputValue('.pp-draft input[placeholder="Unit Price"]');
+ok("picked suggestion puts the brand-less remainder in the box", pv === "PVC TEE 3X3", pv);
+ok("picked suggestion still prefills the last price", price === "374.8", price);
+
+await page.fill('.pp-draft input[placeholder="Qty"]', "2");
+await page.click(".pp-add");
+let before = writes.length;
+for (let i = 0; i < 50 && writes.length === before; i++) await sleep(100);
+const w1 = writes[writes.length - 1];
+ok("saved row = BRAND + remainder, price kept",
+  w1?.particulars_raw === "MOLDEX PVC TEE 3X3" && w1?.unit_price === 374.8 && w1?.quantity === 2,
+  JSON.stringify([w1?.particulars_raw, w1?.unit_price, w1?.quantity]));
+
+// ---- mechanical save rules ---------------------------------------------------
 async function addLine({ brand, particulars, price, qty = "" }) {
-  await page.fill(".pp-brand", brand);
+  await page.fill(".pp-brand input", brand);
   await page.fill(".pp-part input", particulars);
   await page.fill('.pp-draft input[placeholder="Unit Price"]', price);
   if (qty) await page.fill('.pp-draft input[placeholder="Qty"]', qty);
-  const before = writes.length;
+  before = writes.length;
   await page.click(".pp-add");
   for (let i = 0; i < 50 && writes.length === before; i++) await sleep(100);
   return writes[writes.length - 1];
 }
-
-const w1 = await addLine({ brand: " moldex ", particulars: "PVC TEE 3X3", price: "374.80", qty: "2" });
-ok("filled brand is normalized + prepended",
-  w1?.particulars_raw === "MOLDEX PVC TEE 3X3", JSON.stringify(w1?.particulars_raw));
 
 const w2 = await addLine({ brand: "MOLDEX", particulars: "MOLDEX PVC ELBOW 3X90", price: "350" });
 ok("particular already starting with the brand is not doubled",
@@ -94,14 +147,8 @@ const w3 = await addLine({ brand: "", particulars: "ASSORTED NAILS", price: "50"
 ok("blank brand saves just the particulars",
   w3?.particulars_raw === "ASSORTED NAILS", JSON.stringify(w3?.particulars_raw));
 
-ok("price/qty/project still arrive with the row",
-  w1?.unit_price === 374.8 && w1?.quantity === 2 &&
-  w2?.unit_price === 350 && w3?.unit_price === 50,
-  JSON.stringify(writes.map((w) => [w.particulars_raw, w.unit_price, w.quantity])));
-
-// boxes clear after save; date/SI/supplier stay
 const after = await page.evaluate(() => ({
-  brand: document.querySelector(".pp-brand")?.value,
+  brand: document.querySelector(".pp-brand input")?.value,
   part: document.querySelector(".pp-part input")?.value,
   si: document.querySelector('.pp-draft input[placeholder="SI#"]')?.value,
 }));

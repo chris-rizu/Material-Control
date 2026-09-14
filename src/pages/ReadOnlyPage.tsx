@@ -1,18 +1,29 @@
 // Read-Only — the same ledger table as Purchases but with no entry row and
-// no edit/delete actions: just the data, a search box, and sortable
-// Date / Project columns. For viewers who only need to look things up.
+// no edit/delete actions. The search/filter toolbar is the SAME engine as
+// Purchases (shared lib/filter.ts + PredictiveSearchInput): text search with
+// value suggestions, date range, supplier, project, status and category.
+// For viewers who only need to look things up.
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchPurchasesFlat } from "../lib/queries";
+import { fetchCategories, fetchPurchasesFlat, fetchSuppliers } from "../lib/queries";
+import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { displayParticulars, php } from "../lib/format";
 import { comparePurchases, type SortDir, type SortKey } from "../lib/sort";
-import { IconEye, IconSearch } from "../components/icons";
+import PredictiveSearchInput from "../components/PredictiveSearchInput";
+import { IconCalendar, IconEye } from "../components/icons";
 
 export default function ReadOnlyPage() {
   const ledger = useQuery({ queryKey: ["ledger"], queryFn: fetchPurchasesFlat });
+  const cats = useQuery({ queryKey: ["categories"], queryFn: fetchCategories });
+  const sups = useQuery({ queryKey: ["suppliers"], queryFn: fetchSuppliers });
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [supId, setSupId] = useState<number | "">("");
   const [proj, setProj] = useState("");
+  const [status, setStatus] = useState("");
+  const [cat, setCat] = useState<number | "">("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -38,24 +49,20 @@ export default function ReadOnlyPage() {
     return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }, [rows]);
 
+  const filters = { search, dateFrom, dateTo, supId, proj, status, cat };
   const filtered = useMemo(() => {
-    const needle = search.toUpperCase();
-    const list = rows.filter((r) => {
-      if (proj !== "" && (r.project_name ?? "").trim().toUpperCase() !== proj.toUpperCase()) return false;
-      if (!needle) return true;
-      return (
-        r.particulars_raw.toUpperCase().includes(needle) ||
-        (r.supplier ?? "").toUpperCase().includes(needle) ||
-        r.si_no.toUpperCase().includes(needle) ||
-        (r.project_name ?? "").toUpperCase().includes(needle) ||
-        (r.material ?? "").toUpperCase().includes(needle)
-      );
-    });
+    const list = filterPurchases(rows, filters);
     list.sort((a, b) => comparePurchases(a, b, sortKey, sortDir));
     return list;
-  }, [rows, search, proj, sortKey, sortDir]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, search, dateFrom, dateTo, supId, proj, status, cat, sortKey, sortDir]);
 
-  const anyFilter = Boolean(search || proj);
+  const anyFilter = anyFilterOn(filters);
+
+  function clearFilters() {
+    setSearch(""); setDateFrom(""); setDateTo("");
+    setSupId(""); setProj(""); setStatus(""); setCat("");
+  }
 
   const total = filtered.reduce((s, r) => s + Number(r.amount), 0);
 
@@ -81,13 +88,26 @@ export default function ReadOnlyPage() {
 
       <div className="card pp-card">
         <div className="pp-toolbar">
-          <div className="searchbar">
-            <IconSearch size={16} />
-            <input
-              value={search}
-              placeholder="Search by SI#, supplier, project, item, or particulars..."
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <PredictiveSearchInput
+            value={search}
+            onChange={setSearch}
+            rows={rows}
+            placeholder="Search by SI#, supplier, item, project, or particulars..."
+          />
+          <div className="pp-seg" title="Date range">
+            <IconCalendar size={15} />
+            <input type="date" value={dateFrom} max={dateTo || undefined}
+              onChange={(e) => setDateFrom(e.target.value)} />
+            <span className="muted">–</span>
+            <input type="date" value={dateTo} min={dateFrom || undefined}
+              onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+          <div className="pp-seg">
+            <select value={String(supId)}
+              onChange={(e) => setSupId(e.target.value === "" ? "" : Number(e.target.value))}>
+              <option value="">All Suppliers</option>
+              {(sups.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
           </div>
           <div className="pp-seg" title="Filter by project">
             <select value={proj} onChange={(e) => setProj(e.target.value)}>
@@ -95,6 +115,24 @@ export default function ReadOnlyPage() {
               {projects.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
+          <div className="pp-seg">
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="">All Statuses</option>
+              <option value="ok">OK</option>
+              <option value="no-invoice">No invoice</option>
+              <option value="unreadable">Unreadable</option>
+              <option value="repaired">Repaired</option>
+              <option value="receipt">Receipt-rounded</option>
+            </select>
+          </div>
+          <div className="pp-seg">
+            <select value={String(cat)}
+              onChange={(e) => setCat(e.target.value === "" ? "" : Number(e.target.value))}>
+              <option value="">All Categories</option>
+              {(cats.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <button className="pp-clear" onClick={clearFilters}>Clear</button>
         </div>
 
         <div className="pp-scroll">
@@ -127,7 +165,7 @@ export default function ReadOnlyPage() {
                     </div>
                     <div>{rows.length === 0
                       ? "Lines added in Purchases will appear here."
-                      : "Try a shorter search term, or pick All Projects."}</div>
+                      : "Try widening the date range or clearing the filters."}</div>
                   </div>
                 </td></tr>
               )}

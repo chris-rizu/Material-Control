@@ -12,8 +12,9 @@ import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import {
   deletePurchase, ensureMaterial, ensureSupplier, fetchCategories,
-  fetchImportBatches, fetchPurchasesFlat, fetchSuppliers, matchMaterial, updatePurchase,
+  fetchImportBatches, fetchMaterials, fetchPurchasesFlat, fetchSuppliers, matchMaterial, updatePurchase,
 } from "../lib/queries";
+import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { parseParticulars } from "../lib/parse";
 import { guessCategory } from "../lib/guess";
 import { matchSuppliers } from "../lib/supplierMatch";
@@ -21,11 +22,13 @@ import { buildPurchasesWorkbook } from "../lib/excel";
 import { displayParticulars, php, todayISO } from "../lib/format";
 import { comparePurchases, type SortDir, type SortKey } from "../lib/sort";
 import PredictiveMaterialInput from "../components/PredictiveMaterialInput";
+import PredictiveSearchInput from "../components/PredictiveSearchInput";
+import BrandInput from "../components/BrandInput";
 import SupplierInput from "../components/SupplierInput";
 import {
   IconInvoice, IconCalculator, IconTag, IconClock, IconBolt, IconPanelRight,
   IconDownload, IconUpload, IconX, IconPencil, IconTrash,
-  IconCheckCircle, IconCheck, IconInfo, IconArrowRight, IconSearch,
+  IconCheckCircle, IconCheck, IconInfo, IconArrowRight,
   IconBox, IconUsers, IconCalendar,
 } from "../components/icons";
 import type { PurchaseFlat, Supplier } from "../lib/types";
@@ -69,6 +72,7 @@ export default function PurchasePage() {
   const ledger = useQuery({ queryKey: ["ledger"], queryFn: fetchPurchasesFlat });
   const cats = useQuery({ queryKey: ["categories"], queryFn: fetchCategories });
   const sups = useQuery({ queryKey: ["suppliers"], queryFn: fetchSuppliers });
+  const mats = useQuery({ queryKey: ["materials"], queryFn: fetchMaterials }); // brands for the entry row
   const imports = useQuery({ queryKey: ["import-batches"], queryFn: fetchImportBatches });
   const me = useQuery({
     queryKey: ["me"],
@@ -138,31 +142,25 @@ export default function PurchasePage() {
     return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }, [rows]);
 
+  // distinct catalog brands for the entry row's Brand box
+  const brands = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const m of mats.data ?? []) {
+      const b = (m.brand ?? "").trim();
+      if (b && !seen.has(b.toUpperCase())) seen.set(b.toUpperCase(), b);
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [mats.data]);
+
+  const filters = { search, dateFrom, dateTo, supId, proj, status, cat };
   const filtered = useMemo(() => {
-    const needle = search.toUpperCase();
-    const list = rows.filter((r) => {
-      if (dateFrom && r.purchase_date < dateFrom) return false;
-      if (dateTo && r.purchase_date > dateTo) return false;
-      if (supId !== "" && r.supplier_id !== supId) return false;
-      if (proj !== "" && (r.project_name ?? "").trim().toUpperCase() !== proj.toUpperCase()) return false;
-      if (cat !== "" && r.category_id !== cat) return false;
-      if (status === "repaired" && r.amount_source !== "import_missing_filled") return false;
-      if (status === "receipt" && r.amount_source !== "manual") return false;
-      if ((status === "ok" || status === "no-invoice" || status === "unreadable") && r.receipt_quality !== status) return false;
-      if (!needle) return true;
-      return (
-        r.particulars_raw.toUpperCase().includes(needle) ||
-        (r.supplier ?? "").toUpperCase().includes(needle) ||
-        r.si_no.toUpperCase().includes(needle) ||
-        (r.project_name ?? "").toUpperCase().includes(needle) ||
-        (r.material ?? "").toUpperCase().includes(needle)
-      );
-    });
+    const list = filterPurchases(rows, filters);
     list.sort((a, b) => comparePurchases(a, b, sortKey, sortDir));
     return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, search, dateFrom, dateTo, supId, proj, status, cat, sortKey, sortDir]);
 
-  const anyFilter = Boolean(search || dateFrom || dateTo || supId !== "" || proj || status || cat !== "");
+  const anyFilter = anyFilterOn(filters);
 
   function clearFilters() {
     setSearch(""); setDateFrom(""); setDateTo("");
@@ -443,14 +441,12 @@ export default function PurchasePage() {
         <div className="main">
           <div className="card pp-card">
             <div className="pp-toolbar">
-              <div className="searchbar">
-                <IconSearch size={16} />
-                <input
-                  value={search}
-                  placeholder="Search by SI#, supplier, item, project, or particulars..."
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </div>
+              <PredictiveSearchInput
+                value={search}
+                onChange={setSearch}
+                rows={rows}
+                placeholder="Search by SI#, supplier, item, project, or particulars..."
+              />
               <div className="pp-seg" title="Date range">
                 <IconCalendar size={15} />
                 <input type="date" value={dateFrom} max={dateTo || undefined}
@@ -512,14 +508,20 @@ export default function PurchasePage() {
                     }}
                   />
                 </div>
-                <input className="pp-f pp-brand" placeholder="Brand" title="Brand — optional"
-                  value={draft.brand}
-                  onChange={(e) => setDraft({ ...draft, brand: e.target.value })}
-                  onKeyDown={(e) => e.key === "Enter" && trySave()} />
+                <div className="pp-brand">
+                  <BrandInput
+                    value={draft.brand}
+                    brands={brands}
+                    placeholder="Brand"
+                    onEnter={() => void trySave()}
+                    onChange={(t) => setDraft({ ...draft, brand: t })}
+                  />
+                </div>
                 <div className="pp-part">
                   <PredictiveMaterialInput
                     value={draft.particulars}
                     placeholder="Particulars"
+                    brandPrefix={draft.brand.trim() || undefined}
                     onChange={(t) => setDraft({ ...draft, particulars: t })}
                     onPick={(hit) => {
                       // switching to a different material pulls its last paid

@@ -123,27 +123,77 @@ const projCells = () =>
   projs = await page.evaluate(projCells);
   ok("Clear resets every dropdown (4 rows back)", vals.every((v) => v === "") && projs.length === 4,
     `selects=${vals.join("|")} rows=${projs.length}`);
+
+  // predictive search: type part of an item, get grouped suggestions, picking
+  // one fills the box with the exact value (assumption) and filters the table
+  await page.click(".searchbar input");
+  await page.fill(".searchbar input", "MOL");
+  await page.waitForSelector(".searchbar .dropdown .o-name", { timeout: 4000 });
+  const sugg = await page.$$eval(".searchbar .dropdown .o-name", (els) => els.map((e) => e.textContent));
+  ok("search suggests matching items while typing",
+    sugg.join("|") === "MOLDEX PVC TEE 3X3|MOLDEX PVC ELBOW 3X90", sugg.join("|"));
+  const heads = await page.$$eval(".searchbar .dropdown .dd-head", (els) => els.map((e) => e.textContent));
+  ok("suggestions are grouped (Items)", heads.join("|") === "Items", heads.join("|"));
+  await page.click(".searchbar .dropdown .option");
+  const sv = await page.inputValue(".searchbar input");
+  ok("picking a suggestion fills the exact value", sv === "MOLDEX PVC TEE 3X3", sv);
+  projs = await page.evaluate(projCells);
+  ok("assumed value filters the table (1 MOLDEX TEE row)",
+    projs.length === 1 && sv === "MOLDEX PVC TEE 3X3", `rows=${projs.length}`);
+  await page.click(".pp-clear");
 }
 
-// ---------- Read-Only (click the sidebar link — fresh page, no wheel latch) ----------
+// ---------- Read-Only (click the sidebar link — same engine as Purchases) ----------
 await page.click('a[href="#/readonly"]');
 await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
 {
-  const sel = await page.$(".pp-toolbar select");
-  ok("Read-Only toolbar has the project dropdown", !!sel);
-  const opts = await page.$$eval(".pp-toolbar select option", (os) => os.map((o) => o.value));
+  const opts = await page.$$eval(".pp-toolbar select", (sels) =>
+    sels.map((s) => [...s.options].map((o) => o.value)));
+  const first = await page.$$eval(".pp-toolbar select", (sels) =>
+    sels.map((s) => s.options[0].textContent));
+  ok("Read-Only toolbar has the same 4 filter dropdowns as Purchases",
+    opts.length === 4 &&
+    JSON.stringify(first) === JSON.stringify(["All Suppliers", "All Projects", "All Statuses", "All Categories"]),
+    JSON.stringify(first));
+  ok("Read-Only has the date range + Clear too",
+    !!(await page.$(".pp-toolbar input[type=date]")) && !!(await page.$(".pp-clear")));
+  const ropts = await page.$$eval(".pp-toolbar select", (sels) =>
+    sels[1] ? [...sels[1].options].map((o) => o.value) : []);
   ok("Read-Only dropdown lists the same distinct names",
-    JSON.stringify(opts) === JSON.stringify(["", "MCDO", "Talisay"]), JSON.stringify(opts));
+    JSON.stringify(ropts) === JSON.stringify(["", "MCDO", "Talisay"]), JSON.stringify(ropts));
 
-  await page.selectOption(".pp-toolbar select", "MCDO");
+  await page.selectOption(".pp-toolbar select >> nth=1", "MCDO");
   let projs = await page.evaluate(projCells);
   ok("Read-Only MCDO filter → 2 rows", projs.join(",") === "MCDO,MCDO", projs.join(","));
-  const foot = await page.textContent(".pp-foot");
-  ok("Read-Only footer says filtered", foot.includes("(filtered)"), foot.trim());
 
-  await page.selectOption(".pp-toolbar select", "");
-  projs = await page.evaluate(projCells);
-  ok("Read-Only back to All Projects → 4 rows", projs.length === 4, `rows=${projs.length}`);
+  // status + supplier + date range — same engine, same results as Purchases
+  await page.click(".pp-clear");
+  await page.selectOption(".pp-toolbar select >> nth=2", "receipt");
+  let n = await page.$$eval(".pp-table tbody tr", (tr) => tr.length);
+  ok("Read-Only status filter (receipt-rounded → the manual row)", n === 1, `rows=${n}`);
+
+  await page.click(".pp-clear");
+  await page.selectOption(".pp-toolbar select >> nth=0", "2");
+  n = await page.$$eval(".pp-table tbody tr", (tr) => tr.length);
+  ok("Read-Only supplier filter (CEMENT CO → 2 rows)", n === 2, `rows=${n}`);
+
+  await page.click(".pp-clear");
+  await page.fill(".pp-toolbar input[type=date] >> nth=0", "2026-09-05");
+  n = await page.$$eval(".pp-table tbody tr", (tr) => tr.length);
+  ok("Read-Only date-range filter (from 09-05 → 3 rows)", n === 3, `rows=${n}`);
+  await page.click(".pp-clear");
+
+  // predictive search on Read-Only too
+  await page.fill(".searchbar input", "TAL");
+  await page.waitForSelector(".searchbar .dropdown .o-name", { timeout: 4000 });
+  const sugg = await page.$$eval(".searchbar .dropdown .o-name", (els) => els.map((e) => e.textContent));
+  ok("Read-Only search suggests matching projects",
+    sugg.join("|") === "Talisay", sugg.join("|"));
+  await page.click(".searchbar .dropdown .option");
+  const sv = await page.inputValue(".searchbar input");
+  const n2 = await page.$$eval(".pp-table tbody tr", (tr) => tr.length);
+  ok("Read-Only assumed search filters (Talisay → 1 row)",
+    sv === "Talisay" && n2 === 1, `search="${sv}" rows=${n2}`);
 }
 
 await page.locator(".pp-card").first().screenshot({ path: "shots/project-filter-purchases.png" });

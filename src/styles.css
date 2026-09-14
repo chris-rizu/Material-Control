@@ -709,6 +709,8 @@ td.actions { white-space: nowrap; text-align: right; }
 .pp-table .predictive .dropdown {
   z-index: 55; left: 0; right: auto; width: 460px; max-width: 72vw;
 }
+.pp-draft .pp-brand .predictive .dropdown { width: 250px; max-width: 60vw; }
+.pp-toolbar .predictive .dropdown { z-index: 55; }
 
 .pp-foot {
   display: flex; align-items: center; gap: 10px;
