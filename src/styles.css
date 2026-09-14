@@ -255,6 +255,7 @@ pre { background: var(--chip-bg); padding: 12px; overflow-x: auto; font-size: 12
 .userchip:hover { background: var(--side-hover); }
 .avatar {
   width: 34px; height: 34px;
+  border-radius: 50%;
   background: var(--primary); color: #fff;
   display: grid; place-items: center;
   font-size: 12.5px; font-weight: 700; flex: 0 0 auto;
