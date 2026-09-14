@@ -316,6 +316,10 @@ export default function ImportPage() {
 
             <div className="imp-actions">
               {commit.isPending && <span className="muted small">Matching materials and writing lines…</span>}
+              <button disabled={commit.isPending}
+                onClick={() => { if (fileInput.current) fileInput.current.value = ""; pickFile(null); }}>
+                Cancel
+              </button>
               <button className="primary" disabled={commit.isPending || (!!dupe && !force)}
                 onClick={() => { setError(null); setResult(null); commit.mutate(); }}>
                 {commit.isPending ? "Importing…" : `Import ${parsed.lineCount} lines into the database`}

@@ -641,6 +641,14 @@ td.actions { white-space: nowrap; text-align: right; }
 .pp-scroll::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border: 2px solid var(--surface); }
 .pp-scroll::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
 
+/* theme every scrollbar (content pane, menus, dropdowns), both themes */
+* { scrollbar-color: var(--scroll-thumb) transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+::-webkit-scrollbar-corner { background: transparent; }
+
 .pp-table { table-layout: fixed; width: 100%; line-height: 1.35; font-size: 12.5px; }
 /* off-screen rows skip layout — keeps width animations and scrolling cheap */
 .pp-table tbody tr {
