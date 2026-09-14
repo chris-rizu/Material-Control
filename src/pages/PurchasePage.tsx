@@ -104,6 +104,10 @@ export default function PurchasePage() {
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [editId, setEditId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(emptyDraft);
+  // which material is currently picked in the entry / edit row — when the
+  // user switches to a different item, the unit price follows its last price
+  const [draftMatId, setDraftMatId] = useState<number | null>(null);
+  const [editMatId, setEditMatId] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [railOpen, setRailOpen] = useState(() => {
@@ -252,9 +256,11 @@ export default function PurchasePage() {
       setSupForceNew(false);
       setSupSuggest(null);
       setDraft((d) => ({ ...d, particulars: "", price: "", qty: "" }));
+      setDraftMatId(null);
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       qc.invalidateQueries({ queryKey: ["materials"] });
+      qc.invalidateQueries({ queryKey: ["material-search"] }); // fresh last-prices in the dropdown
     },
     onError: (e: Error) => setMsg({ kind: "err", text: e.message }),
   });
@@ -332,6 +338,7 @@ export default function PurchasePage() {
       setEditSupNew(false);
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
+      qc.invalidateQueries({ queryKey: ["material-search"] }); // fresh last-prices in the dropdown
     },
     onError: (e: Error) => setMsg({ kind: "err", text: e.message }),
   });
@@ -344,6 +351,7 @@ export default function PurchasePage() {
   function startEdit(r: PurchaseFlat) {
     setEditId(r.id);
     setEditSupNew(false);
+    setEditMatId(r.material_id ?? null); // the row's own price belongs to this material
     setEditDraft({
       date: r.purchase_date,
       si: r.si_no,
@@ -480,8 +488,14 @@ export default function PurchasePage() {
                     placeholder="Particulars"
                     onChange={(t) => setDraft({ ...draft, particulars: t })}
                     onPick={(hit) => {
-                      if (hit && draft.price === "" && hit.last_unit_price != null) {
-                        setDraft((dr) => ({ ...dr, price: String(hit.last_unit_price) }));
+                      // switching to a different material pulls its last paid
+                      // price into UNIT PRICE; re-picking the same item (e.g.
+                      // after fixing a typo) never touches a typed price
+                      if (hit && hit.id !== draftMatId) {
+                        setDraftMatId(hit.id);
+                        if (hit.last_unit_price != null) {
+                          setDraft((dr) => ({ ...dr, price: String(hit.last_unit_price) }));
+                        }
                       }
                     }}
                     onEnter={() => void trySave()}
@@ -566,8 +580,14 @@ export default function PurchasePage() {
                               placeholder="Particulars"
                               onChange={(t) => setEditDraft({ ...d!, particulars: t })}
                               onPick={(hit) => {
-                                if (hit && d!.price === "" && hit.last_unit_price != null) {
-                                  setEditDraft((dr) => ({ ...dr, price: String(hit.last_unit_price) }));
+                                // same rule as the entry row: a different item
+                                // brings its own last price; same item keeps
+                                // whatever price is typed
+                                if (hit && hit.id !== editMatId) {
+                                  setEditMatId(hit.id);
+                                  if (hit.last_unit_price != null) {
+                                    setEditDraft((dr) => ({ ...dr, price: String(hit.last_unit_price) }));
+                                  }
                                 }
                               }}
                             />

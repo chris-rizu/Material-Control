@@ -57,7 +57,14 @@ export default function PredictiveMaterialInput({
   function pick(i: number) {
     const opt = options[i];
     if (opt) {
-      if (opt.hit) onChange(opt.hit.search_name);
+      if (opt.hit) {
+        // search_name omits degrees ("... ELBOW 3"), so putting it back in the
+        // box verbatim would let the row re-match the 45° twin at save time.
+        // Keep the angle in the text ("... ELBOW 3X90") — the parser reads it
+        // and the matcher then only accepts materials with the same degrees.
+        const deg = Number(opt.hit.degrees ?? 0);
+        onChange(deg > 0 ? `${opt.hit.search_name}X${deg}` : opt.hit.search_name);
+      }
       onPick(opt.hit);
     }
     setOpen(false);
