@@ -206,6 +206,7 @@ begin
       (id, purchase_date, si_no, supplier_id, category_id, material_id,
        particulars_raw, attributes, unit_price, quantity, amount, amount_source,
        receipt_quality, line_seq, import_batch_id, notes, created_by, created_at, project_name)
+    overriding system value
     values
       ((r ->> 'id')::bigint,
        (r ->> 'purchase_date')::date,
@@ -223,8 +224,7 @@ begin
        coalesce(r ->> 'notes', ''),
        (r ->> 'created_by')::uuid,
        coalesce((r ->> 'created_at')::timestamptz, now()),
-       coalesce(r ->> 'project_name', ''))
-    overriding system value;
+       coalesce(r ->> 'project_name', ''));
     new_id := (r ->> 'id')::bigint;
 
     -- bump_usage() fired on the insert; undo its arithmetic so counters stay
@@ -247,9 +247,9 @@ begin
       return 'Supplier #' || r ->> 'id' || ' already exists — nothing to restore.';
     end if;
     insert into public.suppliers (id, name, created_at)
+    overriding system value
     values ((r ->> 'id')::bigint, coalesce(r ->> 'name', 'Unnamed'),
             coalesce((r ->> 'created_at')::timestamptz, now()))
-    overriding system value
     on conflict do nothing;
     if not found then
       return 'A supplier named "' || (r ->> 'name') || '" already exists — nothing to restore.';
@@ -266,6 +266,7 @@ begin
       (id, category_id, brand, type, model_ver, size_native, size_system,
        size_metric, diameter, degrees, unit, reference_price, usage_count,
        last_used_at, created_at)
+    overriding system value
     values
       ((r ->> 'id')::bigint,
        (r ->> 'category_id')::bigint,
@@ -282,7 +283,6 @@ begin
        coalesce((r ->> 'usage_count')::int, 0),
        (r ->> 'last_used_at')::timestamptz,
        coalesce((r ->> 'created_at')::timestamptz, now()))
-    overriding system value
     on conflict do nothing;
     if not found then
       return 'A twin of this particular already exists — nothing to restore.';
