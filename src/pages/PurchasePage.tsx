@@ -14,7 +14,7 @@ import {
   deletePurchase, ensureMaterial, ensureProject, ensureSupplier, fetchCategories,
   fetchImportBatches, fetchMaterials, fetchProjects, fetchPurchasesFlat, fetchSuppliers, matchMaterial, updatePurchase,
 } from "../lib/queries";
-import { filterPurchases, anyFilterOn, sameInvoiceBlock } from "../lib/filter";
+import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { parseParticulars } from "../lib/parse";
 import { guessCategory } from "../lib/guess";
 import { matchSuppliers } from "../lib/supplierMatch";
@@ -639,20 +639,17 @@ export default function PurchasePage() {
                       </div>
                     </td></tr>
                   )}
-                  {filtered.map((r, idx) => {
+                  {filtered.map((r) => {
                     const editing = editId === r.id;
                     const d = editing ? editDraft : null;
-                    // ledger convention: same day + SI# + supplier as the row
-                    // above = the same receipt, so those cells stay blank
-                    const contd = idx > 0 && sameInvoiceBlock(filtered[idx - 1], r);
                     return (
                       <tr key={r.id} className={editing ? "editing" : ""}>
-                        <td title={contd && !editing ? "Same day, receipt and supplier as the line above" : undefined}>{editing
+                        <td>{editing
                           ? <input type="date" value={d!.date} onChange={(e) => setEditDraft({ ...d!, date: e.target.value })} />
-                          : contd ? "" : r.purchase_date}</td>
+                          : r.purchase_date}</td>
                         <td>{editing
                           ? <SiInput value={d!.si} onChange={(t) => setEditDraft({ ...d!, si: t })} />
-                          : contd ? "" : (r.si_no || <span className="muted">—</span>)}</td>
+                          : r.si_no || <span className="muted">—</span>}</td>
                         <td title={r.supplier ?? ""}>{editing
                           ? <SupplierInput
                               value={d!.supplier}
@@ -662,7 +659,7 @@ export default function PurchasePage() {
                                 setEditSupNew(false);
                               }}
                             />
-                          : contd ? "" : r.supplier}</td>
+                          : r.supplier}</td>
                         <td title={displayParticulars(r) === r.particulars_raw
                           ? r.particulars_raw
                           : `${displayParticulars(r)}\nAs typed: ${r.particulars_raw}`}>{editing

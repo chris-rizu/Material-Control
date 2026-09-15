@@ -236,12 +236,12 @@ function rowCells(part) {
     head?.[0] === "2026-09-10" && head?.[1] === "SI# 292713" && head?.[2] === "HARDWARE A",
     JSON.stringify(head?.slice(0, 3)));
   const mid = await page.evaluate(rowCells, "PVC ELBOW 3X90");
-  ok("second line of the receipt is blank in date/SI#/supplier",
-    mid?.[0] === "" && mid?.[1] === "" && mid?.[2] === "",
+  ok("second line repeats the same date + SI# + supplier (no blanks)",
+    mid?.[0] === "2026-09-10" && mid?.[1] === "SI# 292713" && mid?.[2] === "HARDWARE A",
     JSON.stringify(mid?.slice(0, 3)));
   const last = await page.evaluate(rowCells, "PVC PIPE 4");
-  ok("third line of the receipt is blank too",
-    last?.[0] === "" && last?.[1] === "" && last?.[2] === "",
+  ok("third line repeats them too",
+    last?.[0] === "2026-09-10" && last?.[1] === "SI# 292713" && last?.[2] === "HARDWARE A",
     JSON.stringify(last?.slice(0, 3)));
   const other = await page.evaluate(rowCells, "ASSORTED NAILS");
   ok("a different receipt still shows its header (blank SI shows —)",
@@ -307,8 +307,8 @@ function rowCells(part) {
   await page.click('a[href="#/readonly"]');
   await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
   const mid = await page.evaluate(rowCells, "PVC ELBOW 3X90");
-  ok("Read-Only blanks the continuation line too",
-    mid?.[0] === "" && mid?.[1] === "" && mid?.[2] === "",
+  ok("Read-Only repeats date + SI# + supplier on every line too",
+    mid?.[0] === "2026-09-10" && mid?.[1] === "SI# 292713" && mid?.[2] === "HARDWARE A",
     JSON.stringify(mid?.slice(0, 3)));
 }
 

@@ -1,7 +1,8 @@
 // Excel I/O: read the legacy PURCHASES workbook into blocks, and write the
-// ledger back out in the SAME layout as PURCHASES (1).xlsx ("can be opened in
-// Excel"): 7 columns, every cell center-aligned, dates as long dates, money
-// in the accounting format, block headers forward-filled. Nothing sits to the
+// ledger back out ("can be opened in Excel"): 7 columns, every cell
+// center-aligned, Arial 11, dates as long dates, money in the accounting
+// format, every line carrying its own date / SI# / supplier. The data sits in
+// a real Excel table with the blue Table Style Medium 9. Nothing sits to the
 // right of AMOUNT. exceljs is loaded lazily to keep startup fast.
 
 import type ExcelJSNS from "exceljs";
@@ -14,6 +15,7 @@ export const HEADERS = [
   "DATE", "INVOICE/RECEIPT", "SUPPLIER'S NAME", "PARTICULARS",
   "UNIT PRICE", "QUANTITY", "AMOUNT",
 ];
+export const FONT_NAME = "Arial";
 
 // --- import -----------------------------------------------------------------
 
@@ -252,12 +254,12 @@ export interface ExportRow {
 
 /**
  * Build the PURCHASES-layout workbook from flat ledger rows. Returns a Blob.
- * Layout mirrors PURCHASES (1).xlsx: title in A1, headers on row 3, data from
- * row 4 with the date / SI / supplier typed only on the first line of each
- * invoice block — and nothing to the right of AMOUNT. Styling per the user's
- * spec: the data sits in a real Excel table with the blue "Table Style
- * Medium 9" (banded rows), Calibri 11 everywhere, headers capitalized+bold,
- * every cell center-aligned, accounting/long-date number formats.
+ * Title in A1, headers on row 3, data from row 4 — every line carries its own
+ * date / SI# / supplier (nothing left blank). Styling per the user's spec:
+ * the data sits in a real Excel table with the blue "Table Style Medium 9"
+ * (banded rows), Arial 11 everywhere, headers capitalized+bold in white on
+ * the style's blue, every cell center-aligned, accounting/long-date number
+ * formats — and nothing to the right of AMOUNT.
  */
 export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
   const ExcelJS = (await import("exceljs")).default ?? (await import("exceljs"));
@@ -275,31 +277,24 @@ export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
   }
 
   // Title (row 1); the table itself starts at A3 (headers) → A4 (data).
-  ws.getCell("A1").value = "PURCHASES";
+  const title = ws.getCell("A1");
+  title.value = "PURCHASES";
+  title.font = { name: FONT_NAME, size: 11 };
 
-  const key = (x: ExportRow) => `${x.purchase_date}|${x.si_no}|${x.supplier ?? ""}`;
-  const tableRows: ExcelJSNS.CellValue[][] = [];
-  for (let i = 0; i < rows.length; i++) {
-    const firstOfBlock = i === 0 || key(rows[i - 1]) !== key(rows[i]);
-    const x = rows[i];
-    // UTC midnight: exceljs serializes Dates as UTC, so a local-midnight Date
-    // in Manila (UTC+8) would land on the PREVIOUS day in Excel. Continuation
-    // lines keep the date / SI / supplier cells blank, like the ledger.
-    let dateCell: ExcelJSNS.CellValue = "";
-    if (firstOfBlock) {
-      const [y, m, d] = x.purchase_date.slice(0, 10).split("-").map(Number);
-      dateCell = new Date(Date.UTC(y, m - 1, d));
-    }
-    tableRows.push([
-      dateCell,
-      firstOfBlock ? x.si_no : "",
-      firstOfBlock ? (x.supplier ?? "") : "",
+  // UTC midnight: exceljs serializes Dates as UTC, so a local-midnight Date
+  // in Manila (UTC+8) would land on the PREVIOUS day in Excel.
+  const tableRows: ExcelJSNS.CellValue[][] = rows.map((x) => {
+    const [y, m, d] = x.purchase_date.slice(0, 10).split("-").map(Number);
+    return [
+      new Date(Date.UTC(y, m - 1, d)),
+      x.si_no,
+      x.supplier ?? "",
       x.particulars_raw,
       Number(x.unit_price),
       Number(x.quantity),
       Number(x.amount),
-    ]);
-  }
+    ];
+  });
 
   ws.addTable({
     name: "Purchases",
@@ -311,14 +306,24 @@ export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
     rows: tableRows,
   });
 
-  // direct formatting wins over the table style: pin the header row to bold
-  // Calibri 11 in white (matching the style's blue header), while the blue
-  // fill + row banding come from Table Style Medium 9
+  // direct formatting wins over the table style, so pin everything per cell:
+  // Arial 11 everywhere, headers bold in white (the style's blue header and
+  // row banding come from Table Style Medium 9), money/dates formatted,
+  // everything centered — per-cell styles also keep the formats safe in
+  // readers that ignore column-level styles
   const headerRow = ws.getRow(3);
   headerRow.eachCell((cell) => {
-    cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+    cell.font = { name: FONT_NAME, size: 11, bold: true, color: { argb: "FFFFFFFF" } };
     cell.alignment = { horizontal: "center" };
   });
+  for (let r = 4; r < 4 + tableRows.length; r++) {
+    ws.getRow(r).eachCell((cell, col) => {
+      cell.font = { name: FONT_NAME, size: 11 };
+      cell.alignment = { horizontal: "center" };
+      if (col === 1) cell.numFmt = LONG_DATE_FMT;
+      if (col === 5 || col === 7) cell.numFmt = ACCOUNTING_FMT;
+    });
+  }
 
   const buf = await wb.xlsx.writeBuffer();
   return new Blob([buf], {

@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchCategories, fetchPurchasesFlat, fetchSuppliers } from "../lib/queries";
-import { filterPurchases, anyFilterOn, sameInvoiceBlock } from "../lib/filter";
+import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { displayParticulars, php } from "../lib/format";
 import { comparePurchases, type SortDir, type SortKey } from "../lib/sort";
 import PredictiveSearchInput from "../components/PredictiveSearchInput";
@@ -169,17 +169,11 @@ export default function ReadOnlyPage() {
                   </div>
                 </td></tr>
               )}
-              {filtered.map((r, idx) => {
-                // ledger convention: same day + SI# + supplier as the row
-                // above = the same receipt, so those cells stay blank
-                const contd = idx > 0 && sameInvoiceBlock(filtered[idx - 1], r);
-                return (
+              {filtered.map((r) => (
                 <tr key={r.id}>
-                  <td title={contd ? "Same day, receipt and supplier as the line above" : undefined}>
-                    {contd ? "" : r.purchase_date}
-                  </td>
-                  <td>{contd ? "" : (r.si_no || <span className="muted">—</span>)}</td>
-                  <td title={r.supplier ?? ""}>{contd ? "" : r.supplier}</td>
+                  <td>{r.purchase_date}</td>
+                  <td>{r.si_no || <span className="muted">—</span>}</td>
+                  <td title={r.supplier ?? ""}>{r.supplier}</td>
                   <td title={displayParticulars(r) === r.particulars_raw
                     ? r.particulars_raw
                     : `${displayParticulars(r)}\nAs typed: ${r.particulars_raw}`}>
@@ -190,8 +184,7 @@ export default function ReadOnlyPage() {
                   <td className="num">{Number(r.quantity)}</td>
                   <td className="num">₱{php(Number(r.amount))}</td>
                 </tr>
-                );
-              })}
+              ))}
             </tbody>
           </table>
         </div>

@@ -131,30 +131,40 @@ const hVals = HEADERS.map((_, i) => headerRow.getCell(i + 1).value);
 ok("headers capitalized exactly as the ledger", JSON.stringify(hVals) === JSON.stringify(HEADERS),
   JSON.stringify(hVals));
 const hFont = headerRow.getCell(1).font;
-ok("headers are bold Calibri 11",
-  hFont?.bold === true && hFont?.name === "Calibri" && Number(hFont?.size) === 11,
+ok("headers are bold Arial 11",
+  hFont?.bold === true && hFont?.name === "Arial" && Number(hFont?.size) === 11,
   JSON.stringify(hFont));
 ok("header text is white (on the style's blue header)",
   hFont?.color?.argb === "FFFFFFFF", JSON.stringify(hFont?.color));
 
-// data: block header only on the first line, continuation lines blank
+// data: every line carries its own date / SI# / supplier — nothing blank
 const local = (v) => {
   if (!(v instanceof Date)) return null;
   return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
 };
 const cell = (r, c) => ws.getRow(r).getCell(c);
 const r4 = [local(cell(4, 1).value), cell(4, 2).value, cell(4, 3).value];
-ok("line 1 carries the block header (date, SI#, supplier)",
+ok("line 1 carries date, SI#, supplier",
   r4[0] === "2026-09-10" && r4[1] === "SI# 292713" && r4[2] === "HARDWARE A", JSON.stringify(r4));
-const r5 = [cell(5, 1).value, cell(5, 2).value, cell(5, 3).value];
-const r6 = [cell(6, 1).value, cell(6, 2).value, cell(6, 3).value];
-ok("continuation lines are blank in date/SI#/supplier (same receipt)",
-  JSON.stringify(r5) === JSON.stringify(["", "", ""]) &&
-  JSON.stringify(r6) === JSON.stringify(["", "", ""]),
+const r5 = [local(cell(5, 1).value), cell(5, 2).value, cell(5, 3).value];
+const r6 = [local(cell(6, 1).value), cell(6, 2).value, cell(6, 3).value];
+ok("continuation lines repeat the same date/SI#/supplier (no blanks)",
+  JSON.stringify(r5) === JSON.stringify(["2026-09-10", "SI# 292713", "HARDWARE A"]) &&
+  JSON.stringify(r6) === JSON.stringify(["2026-09-10", "SI# 292713", "HARDWARE A"]),
   `${JSON.stringify(r5)} / ${JSON.stringify(r6)}`);
 const r7 = [local(cell(7, 1).value), cell(7, 2).value, cell(7, 3).value];
-ok("the other receipt starts its own block (blank SI stays blank)",
+ok("the other receipt shows its own header (blank SI stays blank)",
   r7[0] === "2026-09-09" && r7[1] === "" && r7[2] === "CEMENT CO", JSON.stringify(r7));
+
+// data cells: Arial 11, dates/money formatted per cell
+const dFont = cell(5, 4).font;
+ok("data cells are Arial 11 (not bold)",
+  dFont?.name === "Arial" && Number(dFont?.size) === 11 && !dFont?.bold,
+  JSON.stringify(dFont));
+ok("DATE cell is long-date formatted",
+  String(cell(4, 1).numFmt ?? "").includes("dddd"), String(cell(4, 1).numFmt));
+ok("AMOUNT cell uses the accounting format",
+  String(cell(4, 7).numFmt ?? "").includes("#,##0.00"), String(cell(4, 7).numFmt));
 
 // numbers land as numbers with the right values
 ok("unit price / qty / amount are numbers",
