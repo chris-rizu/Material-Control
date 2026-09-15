@@ -252,10 +252,12 @@ export interface ExportRow {
 
 /**
  * Build the PURCHASES-layout workbook from flat ledger rows. Returns a Blob.
- * Mirrors PURCHASES (1).xlsx exactly: title in A1, headers on row 3, data from
+ * Layout mirrors PURCHASES (1).xlsx: title in A1, headers on row 3, data from
  * row 4 with the date / SI / supplier typed only on the first line of each
- * invoice block, every cell center-aligned, accounting number formats — and
- * nothing to the right of AMOUNT.
+ * invoice block — and nothing to the right of AMOUNT. Styling per the user's
+ * spec: the data sits in a real Excel table with the blue "Table Style
+ * Medium 9" (banded rows), Calibri 11 everywhere, headers capitalized+bold,
+ * every cell center-aligned, accounting/long-date number formats.
  */
 export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
   const ExcelJS = (await import("exceljs")).default ?? (await import("exceljs"));
@@ -263,7 +265,7 @@ export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
   wb.creator = "Material Control";
   const ws = wb.addWorksheet("Sheet1");
 
-  // column widths + column-wide styles, exactly like the original file
+  // column widths + column-wide styles (centered, money/dates formatted)
   for (let i = 1; i <= COL_WIDTHS.length; i++) {
     const col = ws.getColumn(i);
     col.width = COL_WIDTHS[i - 1];
@@ -272,38 +274,51 @@ export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
     if (i === 5 || i === 7) col.numFmt = ACCOUNTING_FMT;
   }
 
-  // Title (row 1) and headers (row 3) — same rows, plain centered text.
+  // Title (row 1); the table itself starts at A3 (headers) → A4 (data).
   ws.getCell("A1").value = "PURCHASES";
-  const headerRow = ws.getRow(3);
-  HEADERS.forEach((h, i) => {
-    headerRow.getCell(i + 1).value = h;
+
+  const key = (x: ExportRow) => `${x.purchase_date}|${x.si_no}|${x.supplier ?? ""}`;
+  const tableRows: ExcelJSNS.CellValue[][] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const firstOfBlock = i === 0 || key(rows[i - 1]) !== key(rows[i]);
+    const x = rows[i];
+    // UTC midnight: exceljs serializes Dates as UTC, so a local-midnight Date
+    // in Manila (UTC+8) would land on the PREVIOUS day in Excel. Continuation
+    // lines keep the date / SI / supplier cells blank, like the ledger.
+    let dateCell: ExcelJSNS.CellValue = "";
+    if (firstOfBlock) {
+      const [y, m, d] = x.purchase_date.slice(0, 10).split("-").map(Number);
+      dateCell = new Date(Date.UTC(y, m - 1, d));
+    }
+    tableRows.push([
+      dateCell,
+      firstOfBlock ? x.si_no : "",
+      firstOfBlock ? (x.supplier ?? "") : "",
+      x.particulars_raw,
+      Number(x.unit_price),
+      Number(x.quantity),
+      Number(x.amount),
+    ]);
+  }
+
+  ws.addTable({
+    name: "Purchases",
+    ref: "A3",
+    headerRow: true,
+    totalsRow: false,
+    style: { theme: "TableStyleMedium9", showRowStripes: true },
+    columns: HEADERS.map((h) => ({ name: h, filterButton: false })),
+    rows: tableRows,
   });
 
-  let r = 4;
-  let i = 0;
-  while (i < rows.length) {
-    const blockStart = i;
-    const key = (x: ExportRow) => `${x.purchase_date}|${x.si_no}|${x.supplier ?? ""}`;
-    while (i < rows.length && key(rows[i]) === key(rows[blockStart])) i++;
-
-    const blockRows = rows.slice(blockStart, i);
-    for (const x of blockRows) {
-      const row = ws.getRow(r);
-      if (x === blockRows[0]) {
-        // UTC midnight: exceljs serializes Dates as UTC, so a local-midnight
-        // Date in Manila (UTC+8) would land on the PREVIOUS day in Excel
-        const [y, m, d] = x.purchase_date.slice(0, 10).split("-").map(Number);
-        row.getCell(1).value = new Date(Date.UTC(y, m - 1, d));
-        row.getCell(2).value = x.si_no;
-        row.getCell(3).value = x.supplier ?? "";
-      }
-      row.getCell(4).value = x.particulars_raw;
-      row.getCell(5).value = Number(x.unit_price);
-      row.getCell(6).value = Number(x.quantity);
-      row.getCell(7).value = Number(x.amount);
-      r++;
-    }
-  }
+  // direct formatting wins over the table style: pin the header row to bold
+  // Calibri 11 in white (matching the style's blue header), while the blue
+  // fill + row banding come from Table Style Medium 9
+  const headerRow = ws.getRow(3);
+  headerRow.eachCell((cell) => {
+    cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+    cell.alignment = { horizontal: "center" };
+  });
 
   const buf = await wb.xlsx.writeBuffer();
   return new Blob([buf], {

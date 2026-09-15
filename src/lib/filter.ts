@@ -39,3 +39,18 @@ export function filterPurchases(rows: PurchaseFlat[], f: PurchaseFilters): Purch
     );
   });
 }
+
+/**
+ * Ledger convention (PURCHASES (1).xlsx): a line whose date + SI# + supplier
+ * all equal the line shown above it belongs to the SAME receipt — its date /
+ * SI# / supplier cells stay blank, exactly like the Excel. Computed against
+ * the previous row in the displayed order, so filtering or sorting a block's
+ * first line away simply promotes the next line to the header.
+ */
+export function sameInvoiceBlock(a: PurchaseFlat, b: PurchaseFlat): boolean {
+  return (
+    a.purchase_date === b.purchase_date &&
+    a.si_no === b.si_no &&
+    (a.supplier ?? "") === (b.supplier ?? "")
+  );
+}

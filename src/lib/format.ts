@@ -44,6 +44,23 @@ export function monthLabel(iso: string): string {
   return `${months[m - 1] ?? "?"} ${iso.slice(0, 4)}`;
 }
 
+// --- SI# ---------------------------------------------------------------------
+// The SI box carries a fixed "SI#" prefix: the user types only the digits and
+// the ledger stores the full "SI# <digits>" text (as PURCHASES (1).xlsx does).
+
+/** "SI# 292713" → "292713"; anything that isn't pure digits after the prefix
+ *  (N/A, receipt scribbles, blank) → "" — the ledger's no-number form. */
+export function siDigits(raw: string): string {
+  const rest = raw.trim().replace(/^SI#?\s*/i, "");
+  return /^\d+$/.test(rest) ? rest : "";
+}
+
+/** "292713" → "SI# 292713"; blank / non-digits → "". */
+export function toSiNo(digits: string): string {
+  const d = digits.replace(/\D/g, "");
+  return d ? `SI# ${d}` : "";
+}
+
 /**
  * Clean display text for the Particulars column, built from the structured
  * material. Angled fittings render size and angle separately —

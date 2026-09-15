@@ -2,7 +2,7 @@
 import { supabase } from "./supabase";
 import { canonicalKey, buildSearchName, parseParticulars } from "./parse";
 import type {
-  Category, Material, MaterialAlias, Profile, PurchaseFlat, SearchHit, Supplier,
+  Category, Material, MaterialAlias, Profile, Project, PurchaseFlat, SearchHit, Supplier,
   InvoiceBlock, ParsedParticulars,
 } from "./types";
 
@@ -125,6 +125,42 @@ export async function ensureSupplier(name: string): Promise<Supplier> {
     .from("suppliers").insert({ name }).select("*").single();
   if (error) throw error;
   return data as Supplier;
+}
+
+// --- projects (the catalog behind the Particulars tab's Projects card) -------
+
+export async function fetchProjects(): Promise<Project[]> {
+  const { data, error } = await supabase
+    .from("projects").select("*").order("name");
+  if (error) throw error;
+  return data as Project[];
+}
+
+/** Add a project to the catalog; returns the existing twin if one matches. */
+export async function addProject(name: string): Promise<Project> {
+  const clean = name.trim().replace(/\s+/g, " ");
+  const { data: existing } = await supabase
+    .from("projects").select("*").eq("name_norm", clean.toUpperCase()).maybeSingle();
+  if (existing) return existing as Project;
+  const { data, error } = await supabase
+    .from("projects").insert({ name: clean }).select("*").single();
+  if (error) throw error;
+  return data as Project;
+}
+
+/** Best-effort cataloging used by the Purchases save: a typed project name
+ *  lands in the catalog automatically. A duplicate is fine (already there);
+ *  a missing table (migration_004 not run yet) must never block the save. */
+export async function ensureProject(name: string): Promise<void> {
+  const clean = name.trim().replace(/\s+/g, " ");
+  if (!clean) return;
+  const { error } = await supabase.from("projects").insert({ name: clean });
+  if (error && error.code !== "23505") throw error; // 23505 = already catalogued
+}
+
+export async function deleteProject(id: number) {
+  const { error } = await supabase.from("projects").delete().eq("id", id);
+  if (error) throw error;
 }
 
 // --- purchases --------------------------------------------------------------

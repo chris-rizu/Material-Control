@@ -66,6 +66,14 @@ export interface Supplier {
   name: string;
 }
 
+/** One row of the projects catalog (Particulars tab → Projects card). */
+export interface Project {
+  id: number;
+  name: string;
+  name_norm: string;
+  created_at: string;
+}
+
 export interface Purchase {
   id: number;
   purchase_date: string; // YYYY-MM-DD

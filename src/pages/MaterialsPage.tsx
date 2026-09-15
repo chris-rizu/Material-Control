@@ -2,14 +2,18 @@
 // Particular), not from the Purchases dropdown. Input boxes live only in the
 // add form; the table below is plain text. A particular with no brand shows
 // an empty Brand cell. Click a row to see the typed variants (aliases) it
-// remembers.
+// remembers. The Projects card below manages the project list that powers the
+// Purchases entry row's predictive Project box.
 
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ensureMaterial, fetchAliases, fetchCategories, fetchMaterials } from "../lib/queries";
+import {
+  addProject, deleteProject, ensureMaterial, fetchAliases, fetchCategories,
+  fetchMaterials, fetchProjects, fetchPurchasesFlat,
+} from "../lib/queries";
 import { parseParticulars } from "../lib/parse";
 import { guessCategory } from "../lib/guess";
-import { IconBox, IconSearch } from "../components/icons";
+import { IconBox, IconSearch, IconTag, IconTrash } from "../components/icons";
 import type { Material } from "../lib/types";
 
 /** The particular without its brand: type + model + size, angle as " - 90°". */
@@ -31,6 +35,9 @@ export default function MaterialsPage() {
   const qc = useQueryClient();
   const mats = useQuery({ queryKey: ["materials"], queryFn: fetchMaterials });
   const cats = useQuery({ queryKey: ["categories"], queryFn: fetchCategories });
+  const projs = useQuery({ queryKey: ["projects"], queryFn: fetchProjects });
+  // shared ledger cache — powers the "used" counts in the Projects card
+  const ledger = useQuery({ queryKey: ["ledger"], queryFn: fetchPurchasesFlat });
   const [filter, setFilter] = useState("");
   const [catFilter, setCatFilter] = useState<number | "">("");
   const [openId, setOpenId] = useState<number | null>(null);
@@ -40,6 +47,10 @@ export default function MaterialsPage() {
   const [particular, setParticular] = useState("");
   const [addCat, setAddCat] = useState<number | "">("");
   const [msg, setMsg] = useState<{ kind: "ok" | "warn" | "err"; text: string } | null>(null);
+
+  // projects card
+  const [projName, setProjName] = useState("");
+  const [projMsg, setProjMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const aliases = useQuery({
     queryKey: ["aliases", openId],
@@ -81,6 +92,56 @@ export default function MaterialsPage() {
     },
     onError: (e: Error) => setMsg({ kind: "err", text: e.message }),
   });
+
+  const addProj = useMutation({
+    mutationFn: async () => {
+      const name = projName.trim().replace(/\s+/g, " ");
+      if (!name) throw new Error("Type the project name.");
+      return addProject(name);
+    },
+    onSuccess: (p) => {
+      setProjMsg({ kind: "ok", text: `Project added: ${p.name}` });
+      setProjName("");
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+    onError: (e: Error) => setProjMsg({ kind: "err", text: e.message }),
+  });
+
+  const delProj = useMutation({
+    mutationFn: (id: number) => deleteProject(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+    onError: (e: Error) => setProjMsg({ kind: "err", text: e.message }),
+  });
+
+  // usage counts from the ledger (case-insensitive on the trimmed project name)
+  const used = useMemo(() => {
+    const m = new Map<string, { name: string; n: number }>();
+    for (const r of ledger.data ?? []) {
+      const p = (r.project_name ?? "").trim();
+      if (!p) continue;
+      const k = p.toUpperCase();
+      const cur = m.get(k);
+      if (cur) cur.n += 1;
+      else m.set(k, { name: p, n: 1 });
+    }
+    return m;
+  }, [ledger.data]);
+
+  // catalog rows first, then ledger-only names not catalogued yet (they join
+  // the catalog automatically the next time a purchase uses them)
+  const projRows = useMemo(() => {
+    const cat = projs.data ?? [];
+    const out: { id: number | null; name: string; used: number }[] = cat.map((p) => ({
+      id: p.id,
+      name: p.name,
+      used: used.get(p.name_norm ?? p.name.toUpperCase())?.n ?? 0,
+    }));
+    const have = new Set(cat.map((p) => p.name_norm ?? p.name.toUpperCase()));
+    for (const [k, v] of used) {
+      if (!have.has(k)) out.push({ id: null, name: v.name, used: v.n });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  }, [projs.data, used]);
 
   if (mats.isLoading || cats.isLoading) {
     return <div className="page-loading"><span className="spinner" /> Loading the catalog…</div>;
@@ -145,6 +206,76 @@ export default function MaterialsPage() {
           </button>
         </div>
         {msg && <div className={`banner ${msg.kind}`}>{msg.text}</div>}
+      </div>
+
+      <div className="card">
+        <div className="card-head"><IconTag size={16} /> Projects</div>
+        <div className="muted small" style={{ marginTop: 4 }}>
+          The jobs purchases belong to (MCDO, Talisay…). They power the Project box on
+          the Purchases entry row — typing a new project there adds it here automatically.
+        </div>
+        {projs.isError && (
+          <div className="banner warn" style={{ marginTop: 10 }}>
+            The projects catalog isn’t in the database yet — run <b>supabase/migration_004_projects.sql</b> in
+            the Supabase SQL Editor (same steps as migration_003). The list below still shows the projects your
+            ledger already uses.
+          </div>
+        )}
+        <div className="row" style={{ marginTop: 12 }}>
+          <label className="field grow">
+            Project
+            <input value={projName} placeholder="e.g. MCDO"
+              onChange={(e) => setProjName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && projName.trim() && addProj.mutate()} />
+          </label>
+          <button className="primary" disabled={!projName.trim() || addProj.isPending || projs.isError}
+            onClick={() => { setProjMsg(null); addProj.mutate(); }}>
+            {addProj.isPending ? "Adding…" : "Add project"}
+          </button>
+        </div>
+        {projMsg && <div className={`banner ${projMsg.kind}`}>{projMsg.text}</div>}
+        {projRows.length === 0 ? (
+          <div className="muted small" style={{ padding: "10px 0 2px" }}>
+            No projects yet — add one above, or type one on the Purchases entry row.
+          </div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Project ({projRows.length})</th>
+                <th className="num">Used</th>
+                {!projs.isError && <th style={{ width: 44 }} />}
+              </tr>
+            </thead>
+            <tbody>
+              {projRows.map((p) => (
+                <tr key={p.name}>
+                  <td>
+                    <b>{p.name}</b>
+                    {p.id === null && (
+                      <span className="chip" style={{ marginLeft: 8 }} title="Not in the catalog yet — it joins automatically when a purchase uses it">in ledger</span>
+                    )}
+                  </td>
+                  <td className="num">{p.used}×</td>
+                  {!projs.isError && (
+                    <td className="actions">
+                      {p.id !== null && (
+                        <button className="iconbtn" title="Remove from the project list"
+                          onClick={() => {
+                            if (confirm(`Remove “${p.name}” from the project list? Existing purchase lines keep their project name.`)) {
+                              delProj.mutate(p.id!); // guarded by p.id !== null above
+                            }
+                          }}>
+                          <IconTrash size={15} />
+                        </button>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className="card">

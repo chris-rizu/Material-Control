@@ -710,7 +710,21 @@ td.actions { white-space: nowrap; text-align: right; }
   z-index: 55; left: 0; right: auto; width: 460px; max-width: 72vw;
 }
 .pp-draft .pp-brand .predictive .dropdown { width: 250px; max-width: 60vw; }
+.pp-draft .pp-proj .predictive .dropdown { width: 250px; max-width: 60vw; }
 .pp-toolbar .predictive .dropdown { z-index: 55; }
+
+/* SI# box: fixed "SI#" prefix glued to a digits-only input (entry row,
+   inline edit row, /entry invoice editor) */
+.si-box { display: flex; align-items: stretch; width: 100%; }
+.si-box .si-prefix {
+  display: flex; align-items: center;
+  padding: 0 8px; background: var(--chip-bg);
+  border: 1px solid var(--line-strong); border-right: none;
+  font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap;
+}
+.si-box input { flex: 1; min-width: 0; border-left: none; }
+.si-box:focus-within .si-prefix { border-color: var(--primary); }
+label.field .si-box { margin-top: 5px; }
 
 .pp-foot {
   display: flex; align-items: center; gap: 10px;

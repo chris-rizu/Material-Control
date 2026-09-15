@@ -11,19 +11,21 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import {
-  deletePurchase, ensureMaterial, ensureSupplier, fetchCategories,
-  fetchImportBatches, fetchMaterials, fetchPurchasesFlat, fetchSuppliers, matchMaterial, updatePurchase,
+  deletePurchase, ensureMaterial, ensureProject, ensureSupplier, fetchCategories,
+  fetchImportBatches, fetchMaterials, fetchProjects, fetchPurchasesFlat, fetchSuppliers, matchMaterial, updatePurchase,
 } from "../lib/queries";
-import { filterPurchases, anyFilterOn } from "../lib/filter";
+import { filterPurchases, anyFilterOn, sameInvoiceBlock } from "../lib/filter";
 import { parseParticulars } from "../lib/parse";
 import { guessCategory } from "../lib/guess";
 import { matchSuppliers } from "../lib/supplierMatch";
 import { buildPurchasesWorkbook } from "../lib/excel";
-import { displayParticulars, php, todayISO } from "../lib/format";
+import { displayParticulars, php, siDigits, toSiNo, todayISO } from "../lib/format";
 import { comparePurchases, type SortDir, type SortKey } from "../lib/sort";
 import PredictiveMaterialInput from "../components/PredictiveMaterialInput";
 import PredictiveSearchInput from "../components/PredictiveSearchInput";
 import BrandInput from "../components/BrandInput";
+import ProjectInput from "../components/ProjectInput";
+import SiInput from "../components/SiInput";
 import SupplierInput from "../components/SupplierInput";
 import {
   IconInvoice, IconCalculator, IconTag, IconClock, IconBolt, IconPanelRight,
@@ -73,6 +75,7 @@ export default function PurchasePage() {
   const cats = useQuery({ queryKey: ["categories"], queryFn: fetchCategories });
   const sups = useQuery({ queryKey: ["suppliers"], queryFn: fetchSuppliers });
   const mats = useQuery({ queryKey: ["materials"], queryFn: fetchMaterials }); // brands for the entry row
+  const projQ = useQuery({ queryKey: ["projects"], queryFn: fetchProjects }); // the projects catalog
   const imports = useQuery({ queryKey: ["import-batches"], queryFn: fetchImportBatches });
   const me = useQuery({
     queryKey: ["me"],
@@ -141,6 +144,18 @@ export default function PurchasePage() {
     }
     return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }, [rows]);
+
+  // catalog + ledger merged for the predictive Project box (catalog casing wins)
+  const projectNames = useMemo(() => {
+    const seen = new Map<string, string>();
+    const add = (p: string) => {
+      const t = p.trim();
+      if (t && !seen.has(t.toUpperCase())) seen.set(t.toUpperCase(), t);
+    };
+    for (const p of projQ.data ?? []) add(p.name);
+    for (const r of rows) add(r.project_name ?? "");
+    return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [projQ.data, rows]);
 
   // distinct catalog brands for the entry row's Brand box
   const brands = useMemo(() => {
@@ -249,9 +264,18 @@ export default function PurchasePage() {
         }
       } catch { /* prediction is best-effort; the row still saves */ }
 
+      const siNo = toSiNo(d.si);
+      // Ledger convention: a blank invoice cell means "same day, same supplier,
+      // same receipt as the line above" — only a line with NO matching block
+      // above it is genuinely without an invoice.
+      const sameReceipt = siNo === "" && rows.some(
+        (r) => r.purchase_date === d.date &&
+               (r.supplier ?? "").toUpperCase() === supplier.name.toUpperCase(),
+      );
+
       const { error } = await supabase.from("purchases").insert({
         purchase_date: d.date,
-        si_no: d.si,
+        si_no: siNo,
         supplier_id: supplier.id,
         category_id: cats.data ? guessCategory(text, cats.data).id : null,
         material_id: materialId,
@@ -260,13 +284,19 @@ export default function PurchasePage() {
         unit_price: price,
         quantity: qty,
         amount_source: "computed",
-        receipt_quality: d.si === "" || d.si === "N/A" ? "no-invoice" : "ok",
+        receipt_quality: siNo === "" && !sameReceipt ? "no-invoice" : "ok",
         line_seq: rows.filter(
-          (r) => r.purchase_date === d.date && r.si_no === d.si && (r.supplier ?? "") === supplier.name,
+          (r) => r.purchase_date === d.date && r.si_no === siNo && (r.supplier ?? "") === supplier.name,
         ).length,
         created_by: me.data?.id || null,
       });
       if (error) throw error;
+      // a typed project joins the catalog automatically (best-effort — the
+      // purchase above already saved; the catalog is optional until
+      // migration_004 is run)
+      if (d.project.trim()) {
+        try { await ensureProject(d.project); } catch { /* catalog is optional */ }
+      }
     },
     onSuccess: () => {
       setMsg(null);
@@ -277,6 +307,7 @@ export default function PurchasePage() {
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       qc.invalidateQueries({ queryKey: ["materials"] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["material-search"] }); // fresh last-prices in the dropdown
     },
     onError: (e: Error) => setMsg({ kind: "err", text: e.message }),
@@ -337,7 +368,7 @@ export default function PurchasePage() {
       const supplier = await ensureSupplier(d.supplier.trim() || "—");
       await updatePurchase(id, {
         purchase_date: d.date,
-        si_no: d.si,
+        si_no: toSiNo(d.si),
         supplier_id: supplier.id,
         particulars_raw: d.particulars.trim(),
         project_name: d.project.trim(),
@@ -350,12 +381,16 @@ export default function PurchasePage() {
         const m = await matchMaterial(d.particulars);
         if (m.material) await updatePurchase(id, { material_id: m.material.id });
       } catch { /* best-effort */ }
+      if (d.project.trim()) {
+        try { await ensureProject(d.project); } catch { /* catalog is optional */ }
+      }
     },
     onSuccess: () => {
       setEditId(null);
       setEditSupNew(false);
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["material-search"] }); // fresh last-prices in the dropdown
     },
     onError: (e: Error) => setMsg({ kind: "err", text: e.message }),
@@ -372,7 +407,7 @@ export default function PurchasePage() {
     setEditMatId(r.material_id ?? null); // the row's own price belongs to this material
     setEditDraft({
       date: r.purchase_date,
-      si: r.si_no,
+      si: siDigits(r.si_no), // the edit box shows digits only; the save re-wraps "SI# …"
       supplier: r.supplier ?? "",
       brand: "", // the edit row has no Brand box — particulars are edited as one line
       particulars: r.particulars_raw,
@@ -492,9 +527,11 @@ export default function PurchasePage() {
               <div className="pp-draft">
                 <input className="pp-f pp-date" type="date" value={draft.date}
                   onChange={(e) => setDraft({ ...draft, date: e.target.value })} />
-                <input className="pp-f" placeholder="SI#" value={draft.si}
-                  onChange={(e) => setDraft({ ...draft, si: e.target.value })}
-                  onKeyDown={(e) => e.key === "Enter" && trySave()} />
+                <div className="pp-f pp-si">
+                  <SiInput value={draft.si}
+                    onEnter={() => void trySave()}
+                    onChange={(t) => setDraft({ ...draft, si: t })} />
+                </div>
                 <div className="pp-sup">
                   <SupplierInput
                     value={draft.supplier}
@@ -537,9 +574,15 @@ export default function PurchasePage() {
                     onEnter={() => void trySave()}
                   />
                 </div>
-                <input className="pp-f pp-proj" placeholder="Project" value={draft.project}
-                  onChange={(e) => setDraft({ ...draft, project: e.target.value })}
-                  onKeyDown={(e) => e.key === "Enter" && trySave()} />
+                <div className="pp-proj">
+                  <ProjectInput
+                    value={draft.project}
+                    projects={projectNames}
+                    placeholder="Project"
+                    onEnter={() => void trySave()}
+                    onChange={(t) => setDraft({ ...draft, project: t })}
+                  />
+                </div>
                 <input className="pp-f pp-num" type="number" step="0.01" placeholder="Unit Price" value={draft.price}
                   onChange={(e) => setDraft({ ...draft, price: e.target.value })}
                   onKeyDown={(e) => e.key === "Enter" && trySave()} />
@@ -596,17 +639,20 @@ export default function PurchasePage() {
                       </div>
                     </td></tr>
                   )}
-                  {filtered.map((r) => {
+                  {filtered.map((r, idx) => {
                     const editing = editId === r.id;
                     const d = editing ? editDraft : null;
+                    // ledger convention: same day + SI# + supplier as the row
+                    // above = the same receipt, so those cells stay blank
+                    const contd = idx > 0 && sameInvoiceBlock(filtered[idx - 1], r);
                     return (
                       <tr key={r.id} className={editing ? "editing" : ""}>
-                        <td>{editing
+                        <td title={contd && !editing ? "Same day, receipt and supplier as the line above" : undefined}>{editing
                           ? <input type="date" value={d!.date} onChange={(e) => setEditDraft({ ...d!, date: e.target.value })} />
-                          : r.purchase_date}</td>
+                          : contd ? "" : r.purchase_date}</td>
                         <td>{editing
-                          ? <input value={d!.si} onChange={(e) => setEditDraft({ ...d!, si: e.target.value })} />
-                          : (r.si_no || <span className="muted">—</span>)}</td>
+                          ? <SiInput value={d!.si} onChange={(t) => setEditDraft({ ...d!, si: t })} />
+                          : contd ? "" : (r.si_no || <span className="muted">—</span>)}</td>
                         <td title={r.supplier ?? ""}>{editing
                           ? <SupplierInput
                               value={d!.supplier}
@@ -616,7 +662,7 @@ export default function PurchasePage() {
                                 setEditSupNew(false);
                               }}
                             />
-                          : r.supplier}</td>
+                          : contd ? "" : r.supplier}</td>
                         <td title={displayParticulars(r) === r.particulars_raw
                           ? r.particulars_raw
                           : `${displayParticulars(r)}\nAs typed: ${r.particulars_raw}`}>{editing
@@ -645,8 +691,8 @@ export default function PurchasePage() {
                               {r.amount_source === "manual" && <span className="chip">receipt</span>}
                             </>}</td>
                         <td title={r.project_name ?? ""}>{editing
-                          ? <input value={d!.project} placeholder="—"
-                              onChange={(e) => setEditDraft({ ...d!, project: e.target.value })} />
+                          ? <ProjectInput value={d!.project} projects={projectNames}
+                              onChange={(t) => setEditDraft({ ...d!, project: t })} />
                           : (r.project_name || <span className="muted">—</span>)}</td>
                         <td className="num">{editing
                           ? <input className="mono" type="number" step="0.01" value={d!.price} onChange={(e) => setEditDraft({ ...d!, price: e.target.value })} />

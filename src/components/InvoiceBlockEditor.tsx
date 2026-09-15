@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import PredictiveMaterialInput from "./PredictiveMaterialInput";
+import ProjectInput from "./ProjectInput";
+import SiInput from "./SiInput";
 import CategoryForm from "./CategoryForm";
-import { ensureSupplier, saveInvoiceBlock } from "../lib/queries";
+import { ensureSupplier, fetchProjects, saveInvoiceBlock } from "../lib/queries";
 import { parseParticulars } from "../lib/parse";
-import { php } from "../lib/format";
+import { php, toSiNo } from "../lib/format";
 import { IconInvoice, IconBox, IconPlus, IconX, IconCoins } from "./icons";
 import type {
   AttributeField, Category, InvoiceBlock, LineItem, SearchHit, Supplier,
@@ -46,6 +48,7 @@ export default function InvoiceBlockEditor({ categories, suppliers, userId }: Pr
   }));
   const [supplierText, setSupplierText] = useState("");
   const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const projs = useQuery({ queryKey: ["projects"], queryFn: fetchProjects });
 
   const subtotal = block.lines.reduce((s, l) => {
     const p = l.unit_price === "" ? 0 : l.unit_price;
@@ -56,7 +59,8 @@ export default function InvoiceBlockEditor({ categories, suppliers, userId }: Pr
   const save = useMutation({
     mutationFn: async () => {
       const supplier = await ensureSupplier(supplierText);
-      return saveInvoiceBlock({ ...block, supplier_id: supplier.id }, userId);
+      // the SI box holds digits only; the ledger stores "SI# <digits>"
+      return saveInvoiceBlock({ ...block, si_no: toSiNo(block.si_no), supplier_id: supplier.id }, userId);
     },
     onSuccess: (n) => {
       setMessage({ kind: "ok", text: `Saved ${n} line${n > 1 ? "s" : ""} · subtotal ₱${php(subtotal)}` });
@@ -125,8 +129,8 @@ export default function InvoiceBlockEditor({ categories, suppliers, userId }: Pr
           </label>
           <label className="field grow">
             SI # / Receipt
-            <input value={block.si_no} placeholder="SI# 292713 — or N/A"
-              onChange={(e) => setBlock((b) => ({ ...b, si_no: e.target.value }))} />
+            <SiInput value={block.si_no} placeholder="000000 — leave blank if none"
+              onChange={(t) => setBlock((b) => ({ ...b, si_no: t }))} />
           </label>
           <label className="field grow">
             Supplier
@@ -139,8 +143,9 @@ export default function InvoiceBlockEditor({ categories, suppliers, userId }: Pr
           </label>
           <label className="field">
             Project name
-            <input value={block.project_name} placeholder="e.g. Mcdo, Talisay"
-              onChange={(e) => setBlock((b) => ({ ...b, project_name: e.target.value }))} />
+            <ProjectInput value={block.project_name} placeholder="e.g. Mcdo, Talisay"
+              projects={(projs.data ?? []).map((p) => p.name)}
+              onChange={(t) => setBlock((b) => ({ ...b, project_name: t }))} />
           </label>
         </div>
       </div>

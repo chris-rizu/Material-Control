@@ -88,7 +88,7 @@ const results = [];
 const ok = (name, cond, extra = "") =>
   results.push(`${cond ? "PASS" : "FAIL"}  ${name}${extra ? ` — ${extra}` : ""}`);
 
-await page.fill('.pp-draft input[placeholder="SI#"]', "SI# 2001");
+await page.fill(".pp-si input", "2001"); // digits only — the SI# prefix is fixed
 await page.fill(".pp-sup input", "HARDWARE A");
 
 // ---- predictive brand box ----------------------------------------------------
@@ -150,10 +150,10 @@ ok("blank brand saves just the particulars",
 const after = await page.evaluate(() => ({
   brand: document.querySelector(".pp-brand input")?.value,
   part: document.querySelector(".pp-part input")?.value,
-  si: document.querySelector('.pp-draft input[placeholder="SI#"]')?.value,
+  si: document.querySelector(".pp-si input")?.value,
 }));
 ok("brand + particulars clear after save (SI# stays)",
-  after.brand === "" && after.part === "" && after.si === "SI# 2001", JSON.stringify(after));
+  after.brand === "" && after.part === "" && after.si === "2001", JSON.stringify(after));
 
 await page.locator(".pp-card").first().screenshot({ path: "shots/entry-brand.png" });
 console.log(results.join("\n"));
