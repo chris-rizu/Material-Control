@@ -8,13 +8,25 @@
 import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  addCategory, addProject, deleteProject, ensureMaterial, fetchAliases, fetchCategories,
-  fetchMaterials, fetchProjects, fetchPurchasesFlat,
+  addCategory, addProject, deleteCategory, deleteMaterial, deleteProject, deleteSupplier,
+  ensureMaterial, ensureSupplier, fetchAliases, fetchCategories, fetchMaterials, fetchProjects,
+  fetchPurchasesFlat, fetchSuppliers, renameProjectLines, updateCategory, updateMaterial,
+  updateProjectName, updateSupplierName,
 } from "../lib/queries";
 import { parseParticulars } from "../lib/parse";
 import { guessCategory } from "../lib/guess";
-import { IconBox, IconPlus, IconSearch, IconTag, IconTrash } from "../components/icons";
+import {
+  IconBox, IconCheck, IconPencil, IconPlus, IconSearch, IconTag, IconTrash, IconTruck, IconX,
+} from "../components/icons";
 import type { Material } from "../lib/types";
+
+/** Short human text for the database errors the edit/delete actions hit. */
+function friendly(e: unknown): string {
+  const code = (e as { code?: string })?.code;
+  if (code === "23503") return "Still in use — the things pointing at it must be moved first.";
+  if (code === "23505") return "That name (or an identical copy) already exists.";
+  return (e as Error)?.message ?? String(e);
+}
 
 /** The particular without its brand: type + model + size, angle as " - 90°". */
 function particularText(m: Material): string {
@@ -36,7 +48,8 @@ export default function MaterialsPage() {
   const mats = useQuery({ queryKey: ["materials"], queryFn: fetchMaterials });
   const cats = useQuery({ queryKey: ["categories"], queryFn: fetchCategories });
   const projs = useQuery({ queryKey: ["projects"], queryFn: fetchProjects });
-  // shared ledger cache — powers the "used" counts in the Projects card
+  const sups = useQuery({ queryKey: ["suppliers"], queryFn: fetchSuppliers });
+  // shared ledger cache — powers the "used" counts in the Projects/Suppliers cards
   const ledger = useQuery({ queryKey: ["ledger"], queryFn: fetchPurchasesFlat });
   const [filter, setFilter] = useState("");
   const [catFilter, setCatFilter] = useState<number | "">("");
@@ -51,11 +64,28 @@ export default function MaterialsPage() {
   // projects card
   const [projName, setProjName] = useState("");
   const [projMsg, setProjMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [editProjId, setEditProjId] = useState<number | null>(null);
+  const [editProjName, setEditProjName] = useState("");
 
   // categories card
   const [catName, setCatName] = useState("");
   const [catUnit, setCatUnit] = useState("pc");
   const [catMsg, setCatMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [editCatId, setEditCatId] = useState<number | null>(null);
+  const [editCat, setEditCat] = useState({ name: "", unit: "pc" });
+
+  // suppliers card
+  const [supName, setSupName] = useState("");
+  const [supMsg, setSupMsg] = useState<{ kind: "ok" | "warn" | "err"; text: string } | null>(null);
+  const [editSupId, setEditSupId] = useState<number | null>(null);
+  const [editSupName, setEditSupName] = useState("");
+
+  // particular (material) edit — expanded row under the table row
+  const [editMatId, setEditMatId] = useState<number | null>(null);
+  const [editMat, setEditMat] = useState({
+    brand: "", type: "", model_ver: "", size_native: "",
+    degrees: "0", unit: "pc", category_id: "" as number | "",
+  });
 
   const aliases = useQuery({
     queryKey: ["aliases", openId],
@@ -130,8 +160,150 @@ export default function MaterialsPage() {
       setCatUnit("pc");
       qc.invalidateQueries({ queryKey: ["categories"] });
     },
-    onError: (e: Error) => setCatMsg({ kind: "err", text: e.message }),
+    onError: (e: unknown) => setCatMsg({ kind: "err", text: friendly(e) }),
   });
+
+  const saveCatM = useMutation({
+    mutationFn: async () => {
+      if (editCatId === null) throw new Error("Nothing to save.");
+      const name = editCat.name.trim().replace(/\s+/g, " ");
+      if (!name) throw new Error("Type the category name.");
+      await updateCategory(editCatId, { name, unit: editCat.unit.trim() || "pc" });
+    },
+    onSuccess: () => {
+      setEditCatId(null);
+      setCatMsg({ kind: "ok", text: "Category updated." });
+      qc.invalidateQueries({ queryKey: ["categories"] });
+    },
+    onError: (e: unknown) => setCatMsg({ kind: "err", text: friendly(e) }),
+  });
+
+  const delCatM = useMutation({
+    mutationFn: (id: number) => deleteCategory(id),
+    onSuccess: () => {
+      setCatMsg({ kind: "ok", text: "Category removed." });
+      qc.invalidateQueries({ queryKey: ["categories"] });
+    },
+    onError: (e: unknown) => setCatMsg({
+      kind: "err",
+      text: (e as { code?: string })?.code === "23503"
+        ? "This category still has particulars — edit them into another category first."
+        : friendly(e),
+    }),
+  });
+
+  const renameProjM = useMutation({
+    mutationFn: async () => {
+      if (editProjId === null) throw new Error("Nothing to save.");
+      const name = editProjName.trim().replace(/\s+/g, " ");
+      if (!name) throw new Error("Type the project name.");
+      const old = (projs.data ?? []).find((p) => p.id === editProjId)?.name ?? "";
+      await updateProjectName(editProjId, name);
+      if (old && old.toUpperCase() !== name.toUpperCase()) {
+        // the ledger stores project names as free text — re-point those lines
+        await renameProjectLines(old, name);
+      }
+    },
+    onSuccess: () => {
+      setEditProjId(null);
+      setProjMsg({ kind: "ok", text: "Project renamed — its purchase lines were updated too." });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+    },
+    onError: (e: unknown) => setProjMsg({ kind: "err", text: friendly(e) }),
+  });
+
+  const addSupM = useMutation({
+    mutationFn: async () => {
+      const name = supName.trim().replace(/\s+/g, " ");
+      if (!name) throw new Error("Type the supplier name.");
+      const existed = (sups.data ?? []).some((s) => s.name.toUpperCase() === name.toUpperCase());
+      const s = await ensureSupplier(name);
+      return { s, existed };
+    },
+    onSuccess: ({ s, existed }) => {
+      setSupMsg(existed
+        ? { kind: "warn", text: `Already in the list: ${s.name}` }
+        : { kind: "ok", text: `Supplier added: ${s.name}` });
+      setSupName("");
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+    },
+    onError: (e: unknown) => setSupMsg({ kind: "err", text: friendly(e) }),
+  });
+
+  const saveSupM = useMutation({
+    mutationFn: async () => {
+      if (editSupId === null) throw new Error("Nothing to save.");
+      const name = editSupName.trim().replace(/\s+/g, " ");
+      if (!name) throw new Error("Type the supplier name.");
+      await updateSupplierName(editSupId, name);
+    },
+    onSuccess: () => {
+      setEditSupId(null);
+      setSupMsg({ kind: "ok", text: "Supplier renamed — purchase lines show the new name (they link by id)." });
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+    },
+    onError: (e: unknown) => setSupMsg({ kind: "err", text: friendly(e) }),
+  });
+
+  const delSupM = useMutation({
+    mutationFn: (id: number) => deleteSupplier(id),
+    onSuccess: () => {
+      setSupMsg({ kind: "ok", text: "Supplier removed." });
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+    },
+    onError: (e: unknown) => setSupMsg({ kind: "err", text: friendly(e) }),
+  });
+
+  const saveMatM = useMutation({
+    mutationFn: async () => {
+      if (editMatId === null) throw new Error("Nothing to save.");
+      if (editMat.category_id === "") throw new Error("Pick a category.");
+      await updateMaterial(editMatId, {
+        brand: editMat.brand.trim().toUpperCase(),
+        type: editMat.type.trim().toUpperCase(),
+        model_ver: editMat.model_ver.trim().toUpperCase(),
+        size_native: editMat.size_native.trim().toUpperCase(),
+        degrees: Number(editMat.degrees) || 0,
+        unit: editMat.unit.trim() || "pc",
+        category_id: Number(editMat.category_id),
+      });
+    },
+    onSuccess: () => {
+      setEditMatId(null);
+      setMsg({ kind: "ok", text: "Particular updated." });
+      qc.invalidateQueries({ queryKey: ["materials"] });
+      qc.invalidateQueries({ queryKey: ["material-search"] });
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+    },
+    onError: (e: unknown) => setMsg({ kind: "err", text: friendly(e) }),
+  });
+
+  const delMatM = useMutation({
+    mutationFn: (id: number) => deleteMaterial(id),
+    onSuccess: () => {
+      setMsg({ kind: "ok", text: "Particular removed from the catalog." });
+      qc.invalidateQueries({ queryKey: ["materials"] });
+      qc.invalidateQueries({ queryKey: ["material-search"] });
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+    },
+    onError: (e: unknown) => setMsg({ kind: "err", text: friendly(e) }),
+  });
+
+  function startMatEdit(m: Material) {
+    setEditMatId(m.id);
+    setEditMat({
+      brand: m.brand ?? "",
+      type: m.type ?? "",
+      model_ver: m.model_ver ?? "",
+      size_native: m.size_native ?? "",
+      degrees: String(m.degrees ?? 0),
+      unit: m.unit ?? "pc",
+      category_id: m.category_id,
+    });
+  }
 
   // usage counts from the ledger (case-insensitive on the trimmed project name)
   const used = useMemo(() => {
@@ -143,6 +315,19 @@ export default function MaterialsPage() {
       const cur = m.get(k);
       if (cur) cur.n += 1;
       else m.set(k, { name: p, n: 1 });
+    }
+    return m;
+  }, [ledger.data]);
+
+  // how many ledger lines each supplier is on (purchases link by id; the flat
+  // view carries the joined name)
+  const supUsed = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of ledger.data ?? []) {
+      const s = (r.supplier ?? "").trim();
+      if (!s) continue;
+      const k = s.toUpperCase();
+      m.set(k, (m.get(k) ?? 0) + 1);
     }
     return m;
   }, [ledger.data]);
@@ -264,35 +449,66 @@ export default function MaterialsPage() {
               <tr>
                 <th>Project ({projRows.length})</th>
                 <th className="num">Used</th>
-                {!projs.isError && <th style={{ width: 44 }} />}
+                {!projs.isError && <th style={{ width: 88 }} />}
               </tr>
             </thead>
             <tbody>
-              {projRows.map((p) => (
-                <tr key={p.name}>
-                  <td>
-                    <b>{p.name}</b>
-                    {p.id === null && (
-                      <span className="chip" style={{ marginLeft: 8 }} title="Not in the catalog yet — it joins automatically when a purchase uses it">in ledger</span>
-                    )}
-                  </td>
-                  <td className="num">{p.used}×</td>
-                  {!projs.isError && (
-                    <td className="actions">
-                      {p.id !== null && (
-                        <button className="iconbtn" title="Remove from the project list"
-                          onClick={() => {
-                            if (confirm(`Remove “${p.name}” from the project list? Existing purchase lines keep their project name.`)) {
-                              delProj.mutate(p.id!); // guarded by p.id !== null above
-                            }
-                          }}>
-                          <IconTrash size={15} />
-                        </button>
+              {projRows.map((p) => {
+                const editing = p.id !== null && editProjId === p.id;
+                return (
+                  <tr key={p.name}>
+                    <td>
+                      {editing ? (
+                        <input value={editProjName} autoFocus style={{ width: "100%" }}
+                          onChange={(e) => setEditProjName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") renameProjM.mutate();
+                            if (e.key === "Escape") setEditProjId(null);
+                          }} />
+                      ) : (
+                        <>
+                          <b>{p.name}</b>
+                          {p.id === null && (
+                            <span className="chip" style={{ marginLeft: 8 }} title="Not in the catalog yet — it joins automatically when a purchase uses it">in ledger</span>
+                          )}
+                        </>
                       )}
                     </td>
-                  )}
-                </tr>
-              ))}
+                    <td className="num">{p.used}×</td>
+                    {!projs.isError && (
+                      <td className="actions">
+                        {editing ? (
+                          <>
+                            <button className="iconbtn" title="Save"
+                              onClick={() => renameProjM.mutate()}>
+                              <IconCheck size={15} />
+                            </button>
+                            <button className="iconbtn" title="Cancel"
+                              onClick={() => setEditProjId(null)}>
+                              <IconX size={15} />
+                            </button>
+                          </>
+                        ) : p.id !== null && (
+                          <>
+                            <button className="iconbtn" title="Rename project"
+                              onClick={() => { setEditProjId(p.id); setEditProjName(p.name); }}>
+                              <IconPencil size={15} />
+                            </button>
+                            <button className="iconbtn" title="Remove from the project list"
+                              onClick={() => {
+                                if (confirm(`Remove “${p.name}” from the project list? Existing purchase lines keep their project name.`)) {
+                                  delProj.mutate(p.id!); // guarded by p.id !== null above
+                                }
+                              }}>
+                              <IconTrash size={15} />
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -333,16 +549,146 @@ export default function MaterialsPage() {
               <th>Category ({(cats.data ?? []).length})</th>
               <th>Unit</th>
               <th className="num">Particulars</th>
+              <th style={{ width: 88 }} />
             </tr>
           </thead>
           <tbody>
-            {(cats.data ?? []).map((c) => (
-              <tr key={c.id}>
-                <td><b>{c.name}</b></td>
-                <td>{c.unit}</td>
-                <td className="num">{(mats.data ?? []).filter((m) => m.category_id === c.id).length}×</td>
-              </tr>
-            ))}
+            {(cats.data ?? []).map((c) => {
+              const editing = editCatId === c.id;
+              return (
+                <tr key={c.id}>
+                  <td>
+                    {editing ? (
+                      <input value={editCat.name} autoFocus style={{ width: "100%" }}
+                        onChange={(e) => setEditCat({ ...editCat, name: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") saveCatM.mutate();
+                          if (e.key === "Escape") setEditCatId(null);
+                        }} />
+                    ) : (
+                      <b>{c.name}</b>
+                    )}
+                  </td>
+                  <td>
+                    {editing ? (
+                      <input value={editCat.unit} style={{ width: 70 }}
+                        onChange={(e) => setEditCat({ ...editCat, unit: e.target.value })} />
+                    ) : (
+                      c.unit
+                    )}
+                  </td>
+                  <td className="num">{(mats.data ?? []).filter((m) => m.category_id === c.id).length}×</td>
+                  <td className="actions">
+                    {editing ? (
+                      <>
+                        <button className="iconbtn" title="Save" onClick={() => saveCatM.mutate()}>
+                          <IconCheck size={15} />
+                        </button>
+                        <button className="iconbtn" title="Cancel" onClick={() => setEditCatId(null)}>
+                          <IconX size={15} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button className="iconbtn" title="Rename category"
+                          onClick={() => { setEditCatId(c.id); setEditCat({ name: c.name, unit: c.unit }); }}>
+                          <IconPencil size={15} />
+                        </button>
+                        <button className="iconbtn" title="Remove category"
+                          onClick={() => {
+                            if (confirm(`Remove the category “${c.name}”? A category with particulars in it cannot be removed.`)) {
+                              delCatM.mutate(c.id);
+                            }
+                          }}>
+                          <IconTrash size={15} />
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><IconTruck size={16} /> Suppliers</div>
+        <div className="muted small" style={{ marginTop: 4 }}>
+          The companies you buy from. A new name typed on a purchase or an import joins
+          this list automatically.
+        </div>
+        <div className="row" style={{ marginTop: 12 }}>
+          <label className="field grow">
+            Supplier
+            <input value={supName} placeholder="e.g. SUNTRADE"
+              onChange={(e) => setSupName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && supName.trim() && addSupM.mutate()} />
+          </label>
+          <button className="primary" disabled={!supName.trim() || addSupM.isPending}
+            onClick={() => { setSupMsg(null); addSupM.mutate(); }}>
+            {addSupM.isPending ? "Adding…" : "Add supplier"}
+          </button>
+        </div>
+        {supMsg && <div className={`banner ${supMsg.kind}`}>{supMsg.text}</div>}
+        <table>
+          <thead>
+            <tr>
+              <th>Supplier ({(sups.data ?? []).length})</th>
+              <th className="num">Used</th>
+              <th style={{ width: 88 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {(sups.data ?? []).map((s) => {
+              const editing = editSupId === s.id;
+              const n = supUsed.get(s.name.toUpperCase()) ?? 0;
+              return (
+                <tr key={s.id}>
+                  <td>
+                    {editing ? (
+                      <input value={editSupName} autoFocus style={{ width: "100%" }}
+                        onChange={(e) => setEditSupName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") saveSupM.mutate();
+                          if (e.key === "Escape") setEditSupId(null);
+                        }} />
+                    ) : (
+                      <b>{s.name}</b>
+                    )}
+                  </td>
+                  <td className="num">{n}×</td>
+                  <td className="actions">
+                    {editing ? (
+                      <>
+                        <button className="iconbtn" title="Save" onClick={() => saveSupM.mutate()}>
+                          <IconCheck size={15} />
+                        </button>
+                        <button className="iconbtn" title="Cancel" onClick={() => setEditSupId(null)}>
+                          <IconX size={15} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button className="iconbtn" title="Rename supplier"
+                          onClick={() => { setEditSupId(s.id); setEditSupName(s.name); }}>
+                          <IconPencil size={15} />
+                        </button>
+                        <button className="iconbtn" title="Remove supplier"
+                          onClick={() => {
+                            const q = n > 0
+                              ? `Delete “${s.name}”? Its ${n} purchase lines keep their amounts but lose the supplier name.`
+                              : `Delete “${s.name}” from the supplier list?`;
+                            if (confirm(q)) delSupM.mutate(s.id);
+                          }}>
+                          <IconTrash size={15} />
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -379,6 +725,7 @@ export default function MaterialsPage() {
                 <th>Category</th>
                 <th>Unit</th>
                 <th className="num">Used</th>
+                <th style={{ width: 88 }} />
               </tr>
             </thead>
             <tbody>
@@ -393,10 +740,76 @@ export default function MaterialsPage() {
                       <td className="small">{cat?.name ?? "—"}</td>
                       <td>{m.unit}</td>
                       <td className="num">{m.usage_count}×</td>
+                      <td className="actions" onClick={(e) => e.stopPropagation()}>
+                        <button className="iconbtn" title="Edit particular"
+                          onClick={() => (editMatId === m.id ? setEditMatId(null) : startMatEdit(m))}>
+                          <IconPencil size={15} />
+                        </button>
+                        <button className="iconbtn" title="Remove particular"
+                          onClick={() => {
+                            const q = m.usage_count > 0
+                              ? `Remove “${particularText(m)}” from the catalog? Its ${m.usage_count} purchase lines keep their typed text but lose the link.`
+                              : `Remove “${particularText(m)}” from the catalog?`;
+                            if (confirm(q)) delMatM.mutate(m.id);
+                          }}>
+                          <IconTrash size={15} />
+                        </button>
+                      </td>
                     </tr>
+                    {editMatId === m.id && (
+                      <tr>
+                        <td colSpan={6}>
+                          <div className="row" style={{ alignItems: "flex-end", gap: 10 }}>
+                            <label className="field">
+                              Brand
+                              <input value={editMat.brand} style={{ width: 110 }}
+                                onChange={(e) => setEditMat({ ...editMat, brand: e.target.value })} />
+                            </label>
+                            <label className="field grow">
+                              Type
+                              <input value={editMat.type}
+                                onChange={(e) => setEditMat({ ...editMat, type: e.target.value })} />
+                            </label>
+                            <label className="field">
+                              Model / Version
+                              <input value={editMat.model_ver} style={{ width: 100 }}
+                                onChange={(e) => setEditMat({ ...editMat, model_ver: e.target.value })} />
+                            </label>
+                            <label className="field">
+                              Size
+                              <input value={editMat.size_native} style={{ width: 90 }}
+                                onChange={(e) => setEditMat({ ...editMat, size_native: e.target.value })} />
+                            </label>
+                            <label className="field">
+                              Degrees
+                              <input type="number" step="any" min={0} max={360} value={editMat.degrees}
+                                style={{ width: 80 }}
+                                onChange={(e) => setEditMat({ ...editMat, degrees: e.target.value })} />
+                            </label>
+                            <label className="field">
+                              Unit
+                              <input value={editMat.unit} list="unit-options" style={{ width: 70 }}
+                                onChange={(e) => setEditMat({ ...editMat, unit: e.target.value })} />
+                            </label>
+                            <label className="field">
+                              Category
+                              <select value={String(editMat.category_id)}
+                                onChange={(e) => setEditMat({ ...editMat, category_id: e.target.value === "" ? "" : Number(e.target.value) })}>
+                                {(cats.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                            </label>
+                            <button className="primary" disabled={saveMatM.isPending}
+                              onClick={() => saveMatM.mutate()}>
+                              {saveMatM.isPending ? "Saving…" : "Save"}
+                            </button>
+                            <button onClick={() => setEditMatId(null)}>Cancel</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                     {openId === m.id && (
                       <tr>
-                        <td colSpan={5} className="small">
+                        <td colSpan={6} className="small">
                           <b>Spellings remembered:</b>{" "}
                           {(aliases.data ?? []).map((a) => (
                             <span key={a.id} className="chip">{a.alias_text} · {a.hit_count}×</span>

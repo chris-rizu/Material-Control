@@ -330,7 +330,7 @@ function rowCells(part) {
     names.join("|") === "AYALA|MCDO|Talisay", names.join("|"));
 
   page.on("dialog", (d) => void d.accept());
-  await page.click('.card:has-text("Projects") tbody tr:first-child .iconbtn');
+  await page.click('.card:has-text("Projects") tbody tr:first-child .iconbtn[title^="Remove"]');
   for (let i = 0; i < 50 && !projWrites.some((w) => w.kind === "delete"); i++) await sleep(100);
   const del = projWrites.find((w) => w.kind === "delete");
   ok("trash removes the project (DELETE id=eq.3 for AYALA)",

@@ -182,6 +182,56 @@ export async function deleteProject(id: number) {
   if (error) throw error;
 }
 
+/** Rename a catalogued project (name_norm regenerates server-side). */
+export async function updateProjectName(id: number, name: string) {
+  const clean = name.trim().replace(/\s+/g, " ");
+  const { error } = await supabase.from("projects").update({ name: clean }).eq("id", id);
+  if (error) throw error;
+}
+
+/** Project names live on purchase lines as free text, so a rename also
+ *  re-points every ledger line using the old name (any casing). */
+export async function renameProjectLines(oldName: string, newName: string) {
+  const { error } = await supabase
+    .from("purchases").update({ project_name: newName }).ilike("project_name", oldName);
+  if (error) throw error;
+}
+
+// --- categories / suppliers / materials management ---------------------------
+
+export async function updateCategory(id: number, patch: { name?: string; unit?: string }) {
+  const { error } = await supabase.from("categories").update(patch).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteCategory(id: number) {
+  const { error } = await supabase.from("categories").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function updateSupplierName(id: number, name: string) {
+  const { error } = await supabase.from("suppliers").update({ name: name.trim() }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteSupplier(id: number) {
+  const { error } = await supabase.from("suppliers").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/** Patch a material's catalog fields (search_name regenerates server-side). */
+export async function updateMaterial(id: number, patch: Partial<Material>) {
+  const { error } = await supabase.from("materials").update(patch).eq("id", id);
+  if (error) throw error;
+}
+
+/** Purchases keep their typed particulars (material_id set nulls server-side)
+ *  and aliases cascade away. */
+export async function deleteMaterial(id: number) {
+  const { error } = await supabase.from("materials").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // --- purchases --------------------------------------------------------------
 
 export async function fetchPurchasesFlat(): Promise<PurchaseFlat[]> {
