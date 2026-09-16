@@ -46,6 +46,25 @@ export async function fetchCategories(): Promise<Category[]> {
   return data as Category[];
 }
 
+/** Add a category to the catalog; returns the existing twin when the name is
+ *  already there (compared case-insensitively). Sorts to the bottom of the
+ *  list. */
+export async function addCategory(name: string, unit = "pc"): Promise<Category> {
+  const clean = name.trim().replace(/\s+/g, " ");
+  const { data: existing } = await supabase
+    .from("categories").select("*").ilike("name", clean).maybeSingle();
+  if (existing) return existing as Category;
+  const { data: last } = await supabase
+    .from("categories").select("sort").order("sort", { ascending: false }).limit(1)
+    .maybeSingle();
+  const { data, error } = await supabase
+    .from("categories")
+    .insert({ name: clean, unit, sort: (last?.sort ?? 0) + 1 })
+    .select("*").single();
+  if (error) throw error;
+  return data as Category;
+}
+
 export async function searchMaterials(q: string, categoryId?: number | null): Promise<SearchHit[]> {
   const { data, error } = await supabase.rpc("search_materials", {
     q,

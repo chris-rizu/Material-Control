@@ -11,12 +11,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import {
-  deletePurchase, ensureMaterial, ensureProject, ensureSupplier, fetchCategories,
+  addCategory, deletePurchase, ensureMaterial, ensureProject, ensureSupplier, fetchCategories,
   fetchImportBatches, fetchMaterials, fetchProjects, fetchPurchasesFlat, fetchSuppliers, matchMaterial, updatePurchase,
 } from "../lib/queries";
 import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { parseParticulars } from "../lib/parse";
-import { guessCategory } from "../lib/guess";
+import { guessCategoryTarget } from "../lib/guess";
 import { matchSuppliers } from "../lib/supplierMatch";
 import { buildPurchasesWorkbook } from "../lib/excel";
 import { displayParticulars, php, siDigits, toSiNo, todayISO } from "../lib/format";
@@ -255,12 +255,19 @@ export default function PurchasePage() {
 
       const supplier = await ensureSupplier(d.supplier.trim());
       let materialId: number | null = null;
+      let categoryId: number | null = null;
       try {
         const m = await matchMaterial(text);
-        if (m.material) materialId = m.material.id;
-        else if (cats.data) {
-          const cat = guessCategory(text, cats.data);
-          materialId = (await ensureMaterial(cat.id, parseParticulars(text), cat.unit)).id;
+        if (m.material) {
+          materialId = m.material.id;
+          categoryId = m.material.category_id;
+        } else {
+          // the keyword rules name the right category even when the database
+          // doesn't have it yet — addCategory() adds it (or returns the twin)
+          const want = guessCategoryTarget(text);
+          const cat = await addCategory(want.name, want.unit);
+          materialId = (await ensureMaterial(cat.id, parseParticulars(text), cat.unit || want.unit)).id;
+          categoryId = cat.id;
         }
       } catch { /* prediction is best-effort; the row still saves */ }
 
@@ -277,7 +284,7 @@ export default function PurchasePage() {
         purchase_date: d.date,
         si_no: siNo,
         supplier_id: supplier.id,
-        category_id: cats.data ? guessCategory(text, cats.data).id : null,
+        category_id: categoryId,
         material_id: materialId,
         particulars_raw: text,
         project_name: d.project.trim(),
@@ -307,6 +314,7 @@ export default function PurchasePage() {
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       qc.invalidateQueries({ queryKey: ["materials"] });
+      qc.invalidateQueries({ queryKey: ["categories"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["material-search"] }); // fresh last-prices in the dropdown
     },

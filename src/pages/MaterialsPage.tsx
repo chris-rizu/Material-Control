@@ -8,12 +8,12 @@
 import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  addProject, deleteProject, ensureMaterial, fetchAliases, fetchCategories,
+  addCategory, addProject, deleteProject, ensureMaterial, fetchAliases, fetchCategories,
   fetchMaterials, fetchProjects, fetchPurchasesFlat,
 } from "../lib/queries";
 import { parseParticulars } from "../lib/parse";
 import { guessCategory } from "../lib/guess";
-import { IconBox, IconSearch, IconTag, IconTrash } from "../components/icons";
+import { IconBox, IconPlus, IconSearch, IconTag, IconTrash } from "../components/icons";
 import type { Material } from "../lib/types";
 
 /** The particular without its brand: type + model + size, angle as " - 90°". */
@@ -51,6 +51,11 @@ export default function MaterialsPage() {
   // projects card
   const [projName, setProjName] = useState("");
   const [projMsg, setProjMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  // categories card
+  const [catName, setCatName] = useState("");
+  const [catUnit, setCatUnit] = useState("pc");
+  const [catMsg, setCatMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const aliases = useQuery({
     queryKey: ["aliases", openId],
@@ -111,6 +116,21 @@ export default function MaterialsPage() {
     mutationFn: (id: number) => deleteProject(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
     onError: (e: Error) => setProjMsg({ kind: "err", text: e.message }),
+  });
+
+  const addCatM = useMutation({
+    mutationFn: async () => {
+      const name = catName.trim().replace(/\s+/g, " ");
+      if (!name) throw new Error("Type the category name.");
+      return addCategory(name, catUnit.trim() || "pc");
+    },
+    onSuccess: (c) => {
+      setCatMsg({ kind: "ok", text: `Category added: ${c.name} (unit: ${c.unit})` });
+      setCatName("");
+      setCatUnit("pc");
+      qc.invalidateQueries({ queryKey: ["categories"] });
+    },
+    onError: (e: Error) => setCatMsg({ kind: "err", text: e.message }),
   });
 
   // usage counts from the ledger (case-insensitive on the trimmed project name)
@@ -276,6 +296,55 @@ export default function MaterialsPage() {
             </tbody>
           </table>
         )}
+      </div>
+
+      <div className="card">
+        <div className="card-head"><IconPlus size={16} /> Categories</div>
+        <div className="muted small" style={{ marginTop: 4 }}>
+          The buckets purchases are sorted into. Imports and the Purchases entry row add a
+          missing category automatically — you can add one here yourself too.
+        </div>
+        <div className="row" style={{ marginTop: 12 }}>
+          <label className="field grow">
+            Category
+            <input value={catName} placeholder="e.g. Painting Supplies"
+              onChange={(e) => setCatName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && catName.trim() && addCatM.mutate()} />
+          </label>
+          <label className="field">
+            Unit
+            <input value={catUnit} list="unit-options" style={{ width: 90 }}
+              onChange={(e) => setCatUnit(e.target.value)} />
+            <datalist id="unit-options">
+              {["pc", "bag", "L", "kg", "m", "box", "set", "pair"].map((u) => (
+                <option key={u} value={u} />
+              ))}
+            </datalist>
+          </label>
+          <button className="primary" disabled={!catName.trim() || addCatM.isPending}
+            onClick={() => { setCatMsg(null); addCatM.mutate(); }}>
+            {addCatM.isPending ? "Adding…" : "Add category"}
+          </button>
+        </div>
+        {catMsg && <div className={`banner ${catMsg.kind}`}>{catMsg.text}</div>}
+        <table>
+          <thead>
+            <tr>
+              <th>Category ({(cats.data ?? []).length})</th>
+              <th>Unit</th>
+              <th className="num">Particulars</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(cats.data ?? []).map((c) => (
+              <tr key={c.id}>
+                <td><b>{c.name}</b></td>
+                <td>{c.unit}</td>
+                <td className="num">{(mats.data ?? []).filter((m) => m.category_id === c.id).length}×</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div className="card">

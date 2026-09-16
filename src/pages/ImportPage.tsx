@@ -2,15 +2,15 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
 import {
-  ensureMaterial, ensureSupplier, fetchCategories, fetchImportBatches,
+  addCategory, ensureMaterial, ensureSupplier, fetchCategories, fetchImportBatches,
   fetchPurchasesFlat, findImportBatch, matchMaterial, recordImportBatch,
 } from "../lib/queries";
 import { parseParticulars } from "../lib/parse";
-import { guessCategory } from "../lib/guess";
+import { guessCategoryTarget } from "../lib/guess";
 import { buildPurchasesWorkbook, readPurchasesFile } from "../lib/excel";
 import type { ParsedLedger } from "../lib/excel";
 import { php, todayISO } from "../lib/format";
-import type { ParsedParticulars } from "../lib/types";
+import type { Category, ParsedParticulars } from "../lib/types";
 import { IconDownload, IconInvoice, IconUpload } from "../components/icons";
 
 async function sha256Hex(buf: ArrayBuffer): Promise<string> {
@@ -58,22 +58,37 @@ export default function ImportPage() {
       if (!parsed || !cats.data) throw new Error("Nothing to import.");
       const userId = me.data ?? "";
 
-      // 1) Match every distinct particulars string once.
+      // 1) Match every distinct particulars string once. Categories come from
+      //    the keyword rules — and any category the rules name that the
+      //    database doesn't have yet is ADDED on the spot, so nothing falls
+      //    into a wrong bucket just because it was missing.
       const distinctTexts = [...new Set(parsed.blocks.flatMap((b) => b.lines.map((l) => l.particulars)))];
       const materialFor = new Map<string, number>();
+      const catFor = new Map<string, number>();
       const notesFor = new Map<string, string>();
+      const knownCats: Category[] = [...(cats.data ?? [])];
+      const ensureCat = async (target: { name: string; unit: string }): Promise<Category> => {
+        let c = knownCats.find((k) => k.name.toUpperCase() === target.name.toUpperCase());
+        if (!c) {
+          c = await addCategory(target.name, target.unit);
+          knownCats.push(c);
+        }
+        return c;
+      };
       for (const text of distinctTexts) {
         const m = await matchMaterial(text);
         if (m.material) {
           materialFor.set(text, m.material.id);
+          catFor.set(text, m.material.category_id);
           if (m.confidence === "review") {
             notesFor.set(text, `import: fuzzy-matched to “${m.material.search_name}” — verify`);
           }
         } else {
           const parsedFields: ParsedParticulars = parseParticulars(text);
-          const cat = guessCategory(text, cats.data);
+          const cat = await ensureCat(guessCategoryTarget(text));
           const created = await ensureMaterial(cat.id, parsedFields, cat.unit);
           materialFor.set(text, created.id);
+          catFor.set(text, cat.id);
           notesFor.set(text, `import: created new material in “${cat.name}”`);
         }
       }
@@ -102,7 +117,7 @@ export default function ImportPage() {
             purchase_date: l.date,
             si_no: l.siNo,
             supplier_id: supplierFor.get(l.supplier) ?? null,
-            category_id: cats.data ? guessCategory(l.particulars, cats.data).id : null,
+            category_id: catFor.get(l.particulars) ?? null,
             material_id: materialFor.get(l.particulars) ?? null,
             particulars_raw: l.particulars,
             attributes: {},
@@ -132,6 +147,7 @@ export default function ImportPage() {
       setResult(`Imported ${r.count} lines. Grand total with repairs: ${php(r.total)} (as recorded in the original file: ${php(r.stored)}).`);
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["materials"] });
+      qc.invalidateQueries({ queryKey: ["categories"] });
       qc.invalidateQueries({ queryKey: ["import-batches"] });
       setParsed(null);
       if (fileInput.current) fileInput.current.value = "";
@@ -233,6 +249,7 @@ export default function ImportPage() {
           onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
 
         {error && <div className="banner err">{error}</div>}
+        {result && <div className="banner ok">{result}</div>}
 
         {parsed && (
           <>
@@ -325,7 +342,6 @@ export default function ImportPage() {
                 {commit.isPending ? "Importing…" : `Import ${parsed.lineCount} lines into the database`}
               </button>
             </div>
-            {result && <div className="banner ok">{result}</div>}
           </>
         )}
       </div>
