@@ -136,5 +136,26 @@ await sleep(300);
 await page.screenshot({ path: join(SHOTS, "receipt-viewer.png") });
 console.log("shot receipt-viewer.png");
 
+// 4) Entry row — staged photo on the attach button, ready to file with Add
+await page.locator(".rv-cap .iconbtn").click(); // close the viewer (it closes the popover with it)
+await page.locator(".pp-draft .pp-si input").fill("555");
+await page.locator('.pp-draft input[placeholder="Select supplier"]').fill("HARDWARE A");
+await page.locator('.pp-draft input[placeholder="Particulars"]').fill("TEST NAIL 1IN");
+await page.locator('.pp-draft input[placeholder="Unit Price"]').fill("10");
+await page.locator(".pp-photo input[type=file]").setInputFiles(join(ROOT, "receipts", "3.png"));
+await page.waitForSelector(".pp-photo.staged img", { timeout: 5000 });
+await sleep(300);
+await page.screenshot({ path: join(SHOTS, "entry-row-photo.png") });
+console.log("shot entry-row-photo.png");
+
+// 5) Read-Only tab — same popover, view-only (no Add receipt button)
+await page.goto(BASE + "/#/readonly", { waitUntil: "domcontentloaded" });
+await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
+await page.locator('.pp-table tbody tr:has-text("SI# 1001") .si-link').first().click();
+await page.waitForSelector(".si-pop", { timeout: 5000 });
+await sleep(300);
+await page.screenshot({ path: join(SHOTS, "readonly-popover.png") });
+console.log("shot readonly-popover.png");
+
 await browser.close();
 console.log("done");
