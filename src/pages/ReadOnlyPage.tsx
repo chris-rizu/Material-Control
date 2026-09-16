@@ -6,17 +6,25 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchCategories, fetchPurchasesFlat, fetchSuppliers } from "../lib/queries";
+import { fetchCategories, fetchPurchasesFlat, fetchReceipts, fetchSuppliers, receiptForBlock } from "../lib/queries";
 import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { displayParticulars, php } from "../lib/format";
 import { comparePurchases, type SortDir, type SortKey } from "../lib/sort";
 import PredictiveSearchInput from "../components/PredictiveSearchInput";
-import { IconCalendar, IconEye } from "../components/icons";
+import ReceiptViewer from "../components/ReceiptViewer";
+import { IconCalendar, IconEye, IconInvoice } from "../components/icons";
+import type { Receipt } from "../lib/types";
 
 export default function ReadOnlyPage() {
   const ledger = useQuery({ queryKey: ["ledger"], queryFn: fetchPurchasesFlat });
   const cats = useQuery({ queryKey: ["categories"], queryFn: fetchCategories });
   const sups = useQuery({ queryKey: ["suppliers"], queryFn: fetchSuppliers });
+  const rcpts = useQuery({ queryKey: ["receipts"], queryFn: fetchReceipts });
+  // receipt-photo popover (view only): the SI# clicked, kept while the menu is open
+  const [siMenu, setSiMenu] = useState<{
+    rowId: number; date: string; si: string; supId: number | null; supName: string;
+  } | null>(null);
+  const [viewing, setViewing] = useState<Receipt | null>(null);
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -172,7 +180,40 @@ export default function ReadOnlyPage() {
               {filtered.map((r) => (
                 <tr key={r.id}>
                   <td>{r.purchase_date}</td>
-                  <td>{r.si_no || <span className="muted">—</span>}</td>
+                  <td className="si-cell">
+                    <button
+                      className="si-link"
+                      title={r.si_no ? "View this receipt's photo" : "Receipt options for this same-receipt block"}
+                      onClick={() => setSiMenu(siMenu?.rowId === r.id ? null : {
+                        rowId: r.id,
+                        date: r.purchase_date,
+                        si: r.si_no,
+                        supId: r.supplier_id ?? null,
+                        supName: r.supplier ?? "",
+                      })}
+                    >
+                      {r.si_no || <span className="muted">—</span>}
+                    </button>
+                    {siMenu?.rowId === r.id && (
+                      <>
+                        <div className="pop-backdrop" onClick={() => setSiMenu(null)} />
+                        <div className="si-pop">
+                          <div className="sp-title">{siMenu.si || "No invoice #"}</div>
+                          <div className="sp-sub">{siMenu.date} · {siMenu.supName || "—"}</div>
+                          {(() => {
+                            const rec = receiptForBlock(rcpts.data ?? [], siMenu.date, siMenu.si, siMenu.supId);
+                            return rec ? (
+                              <button className="mi primary" onClick={() => { setViewing(rec); setSiMenu(null); }}>
+                                <IconInvoice size={15} /> View Receipt
+                              </button>
+                            ) : (
+                              <div className="sp-none">No receipt photo yet.</div>
+                            );
+                          })()}
+                        </div>
+                      </>
+                    )}
+                  </td>
                   <td title={r.supplier ?? ""}>{r.supplier}</td>
                   <td title={displayParticulars(r) === r.particulars_raw
                     ? r.particulars_raw
@@ -196,6 +237,8 @@ export default function ReadOnlyPage() {
           <span className="f-total">₱{php(total)}</span>
         </div>
       </div>
+
+      <ReceiptViewer receipt={viewing} onClose={() => setViewing(null)} />
     </>
   );
 }

@@ -38,6 +38,10 @@ export const IconBox = (p: P) => (
   <I {...p}><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" /><path d="M3.3 8.3L12 13l8.7-4.7M12 13v9" /></I>
 );
 
+export const IconReceipt = (p: P) => (
+  <I {...p}><path d="M6 3h12v18l-2-1.4-2 1.4-2-1.4L10 21l-2-1.4L6 21V3z" /><path d="M9.5 8h5M9.5 12h5M9.5 16h3" /></I>
+);
+
 export const IconEye = (p: P) => (
   <I {...p}><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z" /><circle cx="12" cy="12" r="2.8" /></I>
 );

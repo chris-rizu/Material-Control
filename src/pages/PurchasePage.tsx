@@ -12,7 +12,8 @@ import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import {
   addCategory, deletePurchase, ensureMaterial, ensureProject, ensureSupplier, fetchCategories,
-  fetchImportBatches, fetchMaterials, fetchProjects, fetchPurchasesFlat, fetchSuppliers, matchMaterial, updatePurchase,
+  fetchImportBatches, fetchMaterials, fetchProjects, fetchPurchasesFlat, fetchReceipts,
+  fetchSuppliers, matchMaterial, receiptForBlock, updatePurchase, uploadReceipt,
 } from "../lib/queries";
 import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { parseParticulars } from "../lib/parse";
@@ -27,13 +28,14 @@ import BrandInput from "../components/BrandInput";
 import ProjectInput from "../components/ProjectInput";
 import SiInput from "../components/SiInput";
 import SupplierInput from "../components/SupplierInput";
+import ReceiptViewer from "../components/ReceiptViewer";
 import {
   IconInvoice, IconCalculator, IconTag, IconClock, IconBolt, IconPanelRight,
   IconDownload, IconUpload, IconX, IconPencil, IconTrash,
-  IconCheckCircle, IconCheck, IconInfo, IconArrowRight,
-  IconBox, IconUsers, IconCalendar,
+  IconCheckCircle, IconCheck, IconInfo, IconArrowRight, IconPlus,
+  IconBox, IconUsers, IconCalendar, IconReceipt,
 } from "../components/icons";
-import type { PurchaseFlat, Supplier } from "../lib/types";
+import type { PurchaseFlat, Receipt, Supplier } from "../lib/types";
 
 interface Draft {
   date: string;
@@ -77,6 +79,7 @@ export default function PurchasePage() {
   const mats = useQuery({ queryKey: ["materials"], queryFn: fetchMaterials }); // brands for the entry row
   const projQ = useQuery({ queryKey: ["projects"], queryFn: fetchProjects }); // the projects catalog
   const imports = useQuery({ queryKey: ["import-batches"], queryFn: fetchImportBatches });
+  const rcpts = useQuery({ queryKey: ["receipts"], queryFn: fetchReceipts }); // receipt photos (ledger SI# links)
   const me = useQuery({
     queryKey: ["me"],
     queryFn: async () => {
@@ -105,6 +108,26 @@ export default function PurchasePage() {
   const [editMatId, setEditMatId] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [exporting, setExporting] = useState(false);
+  // receipt-photo popover: the SI# clicked (blank-SI "same receipt" lines share
+  // the photo keyed to date + supplier)
+  const [siMenu, setSiMenu] = useState<{
+    rowId: number; date: string; si: string; supId: number | null; supName: string;
+  } | null>(null);
+  const [viewing, setViewing] = useState<Receipt | null>(null);
+  // staged receipt photo for the entry row — files with Add against the
+  // line's invoice block (date + SI# + supplier), one photo per receipt
+  const [draftPhoto, setDraftPhoto] = useState<File | null>(null);
+  const [draftPhotoUrl, setDraftPhotoUrl] = useState("");
+  function stageDraftPhoto(f: File | null) {
+    if (draftPhotoUrl) URL.revokeObjectURL(draftPhotoUrl);
+    setDraftPhoto(f);
+    setDraftPhotoUrl(f ? URL.createObjectURL(f) : "");
+  }
+  function clearDraftPhoto() {
+    if (draftPhotoUrl) URL.revokeObjectURL(draftPhotoUrl);
+    setDraftPhoto(null);
+    setDraftPhotoUrl("");
+  }
   // sortable headers (Date, Project Name) — newest-first by default
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -237,7 +260,8 @@ export default function PurchasePage() {
   // ---- mutations -----------------------------------------------------------
 
   const saveRow = useMutation({
-    mutationFn: async (d: Draft) => {
+    mutationFn: async (args: { d: Draft; photo: File | null }): Promise<{ photoError?: string }> => {
+      const { d, photo } = args;
       if (!d.date) throw new Error("Pick a date first.");
       if (!d.supplier.trim()) throw new Error("Type the supplier.");
       if (!d.particulars.trim()) throw new Error("Type what was bought.");
@@ -304,18 +328,31 @@ export default function PurchasePage() {
       if (d.project.trim()) {
         try { await ensureProject(d.project); } catch { /* catalog is optional */ }
       }
+      // the staged receipt photo files against this line's invoice block;
+      // a failed photo never fails the saved line — the banner explains
+      let photoError: string | undefined;
+      if (photo) {
+        try {
+          await uploadReceipt({ purchaseDate: d.date, siNo, supplierId: supplier.id, file: photo });
+        } catch (e) {
+          photoError = `Line saved — but the receipt photo didn't upload: ${(e as Error).message}`;
+        }
+      }
+      return { photoError };
     },
-    onSuccess: () => {
-      setMsg(null);
+    onSuccess: (res) => {
+      setMsg(res?.photoError ? { kind: "err", text: res.photoError } : null);
       setSupForceNew(false);
       setSupSuggest(null);
       setDraft((d) => ({ ...d, brand: "", particulars: "", project: "", price: "", qty: "" }));
       setDraftMatId(null);
+      clearDraftPhoto();
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       qc.invalidateQueries({ queryKey: ["materials"] });
       qc.invalidateQueries({ queryKey: ["categories"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["receipts"] }); // the staged photo (if any) filed
       qc.invalidateQueries({ queryKey: ["material-search"] }); // fresh last-prices in the dropdown
     },
     onError: (e: Error) => setMsg({ kind: "err", text: e.message }),
@@ -339,7 +376,7 @@ export default function PurchasePage() {
         setSupForceNew(true);
       }
     }
-    saveRow.mutate(draft);
+    saveRow.mutate({ d: draft, photo: draftPhoto });
   }
 
   function useCandidate(name: string) {
@@ -347,13 +384,13 @@ export default function PurchasePage() {
     setDraft(d);
     setSupSuggest(null);
     setSupForceNew(false);
-    saveRow.mutate(d);
+    saveRow.mutate({ d, photo: draftPhoto });
   }
 
   function addNewAnyway() {
     setSupSuggest(null);
     setSupForceNew(true);
-    saveRow.mutate(draft);
+    saveRow.mutate({ d: draft, photo: draftPhoto });
   }
 
   const commitEdit = useMutation({
@@ -598,6 +635,16 @@ export default function PurchasePage() {
                   onChange={(e) => setDraft({ ...draft, qty: e.target.value })}
                   onKeyDown={(e) => e.key === "Enter" && trySave()} />
                 <div className="amount-preview">₱{php(draftAmount)}</div>
+                <label
+                  className={"pp-photo" + (draftPhoto ? " staged" : "")}
+                  title={draftPhoto
+                    ? "Receipt photo attached — it files with this line's invoice on Add"
+                    : "Attach the receipt photo (files with Add)"}
+                >
+                  <input type="file" accept="image/*"
+                    onChange={(e) => stageDraftPhoto(e.target.files?.[0] ?? null)} />
+                  {draftPhotoUrl ? <img src={draftPhotoUrl} alt="" /> : <IconReceipt size={16} />}
+                </label>
                 <button className="primary pp-add" disabled={saveRow.isPending}
                   onClick={() => void trySave()}>
                   {saveRow.isPending ? <span className="spinner" style={{ borderTopColor: "#fff" }} /> : "Add"}
@@ -655,9 +702,55 @@ export default function PurchasePage() {
                         <td>{editing
                           ? <input type="date" value={d!.date} onChange={(e) => setEditDraft({ ...d!, date: e.target.value })} />
                           : r.purchase_date}</td>
-                        <td>{editing
-                          ? <SiInput value={d!.si} onChange={(t) => setEditDraft({ ...d!, si: t })} />
-                          : r.si_no || <span className="muted">—</span>}</td>
+                        <td className="si-cell">{editing ? (
+                          <SiInput value={d!.si} onChange={(t) => setEditDraft({ ...d!, si: t })} />
+                        ) : (
+                          <>
+                            <button
+                              className="si-link"
+                              title={r.si_no ? "View this receipt's photo" : "Receipt options for this same-receipt block"}
+                              onClick={() => setSiMenu(siMenu?.rowId === r.id ? null : {
+                                rowId: r.id,
+                                date: r.purchase_date,
+                                si: r.si_no,
+                                supId: r.supplier_id ?? null,
+                                supName: r.supplier ?? "",
+                              })}
+                            >
+                              {r.si_no || <span className="muted">—</span>}
+                            </button>
+                            {siMenu?.rowId === r.id && (
+                              <>
+                                <div className="pop-backdrop" onClick={() => setSiMenu(null)} />
+                                <div className="si-pop">
+                                  <div className="sp-title">{siMenu.si || "No invoice #"}</div>
+                                  <div className="sp-sub">{siMenu.date} · {siMenu.supName || "—"}</div>
+                                  {(() => {
+                                    const rec = receiptForBlock(rcpts.data ?? [], siMenu.date, siMenu.si, siMenu.supId);
+                                    return rec ? (
+                                      <button className="mi primary" onClick={() => { setViewing(rec); setSiMenu(null); }}>
+                                        <IconInvoice size={15} /> View Receipt
+                                      </button>
+                                    ) : (
+                                      <>
+                                        <div className="sp-none">No receipt photo yet.</div>
+                                        <button className="mi" onClick={() => {
+                                          const s = siMenu;
+                                          setSiMenu(null);
+                                          navigate("/receipts", {
+                                            state: { purchase_date: s.date, si_no: s.si, supplier_id: s.supId },
+                                          });
+                                        }}>
+                                          <IconPlus size={15} /> Add receipt
+                                        </button>
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                              </>
+                            )}
+                          </>
+                        )}</td>
                         <td title={r.supplier ?? ""}>{editing
                           ? <SupplierInput
                               value={d!.supplier}
@@ -877,6 +970,8 @@ export default function PurchasePage() {
           </button>
         )}
       </div>
+
+      <ReceiptViewer receipt={viewing} onClose={() => setViewing(null)} />
     </>
   );
 }

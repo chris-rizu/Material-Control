@@ -8,3 +8,4 @@ shots/*
 *.local
 *.log
 *.xlsx
+receipts/

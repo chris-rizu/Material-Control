@@ -12,6 +12,7 @@ import PurchasePage from "./pages/PurchasePage";
 import EntryPage from "./pages/EntryPage";
 import MaterialsPage from "./pages/MaterialsPage";
 import SuppliersPage from "./pages/SuppliersPage";
+import ReceiptsPage from "./pages/ReceiptsPage";
 import ReportsPage from "./pages/ReportsPage";
 import ImportPage from "./pages/ImportPage";
 import AdminUsersPage from "./pages/AdminUsersPage";
@@ -78,6 +79,7 @@ export default function App() {
           <Route path="/entry" element={<Guard session={session} profile={profile} roles={["owner", "encoder"]}><EntryPage /></Guard>} />
           <Route path="/materials" element={<MaterialsPage />} />
           <Route path="/suppliers" element={<SuppliersPage />} />
+          <Route path="/receipts" element={<ReceiptsPage />} />
           <Route path="/import" element={<Guard session={session} profile={profile} roles={["owner", "encoder"]}><ImportPage /></Guard>} />
           <Route path="/admin" element={<Guard session={session} profile={profile} roles={["owner"]}><AdminUsersPage /></Guard>} />
         </Route>

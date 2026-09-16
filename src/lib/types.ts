@@ -126,6 +126,21 @@ export interface PurchaseFlat {
   project_name: string | null;
 }
 
+/** One filed receipt photo, keyed to an invoice block (date + SI# + supplier —
+ *  the same grouping the ledger uses, so blank-SI blocks file one photo too). */
+export interface Receipt {
+  id: number;
+  purchase_date: string; // YYYY-MM-DD
+  si_no: string;         // "SI# 123" or "" (blank = same-receipt block)
+  supplier_id: number | null;
+  storage_path: string;  // path inside the private `receipts` bucket
+  file_name: string;
+  mime_type: string;
+  file_size: number;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
 /** One row of the History tab (activity_log table). */
 export interface ActivityEntry {
   id: number;

@@ -6,7 +6,7 @@ import type { Profile } from "../lib/types";
 import {
   IconInvoice, IconBox, IconTruck, IconReport, IconUpload,
   IconUsers, IconSettings, IconBell, IconChevronDown, IconLogout,
-  IconMenu, IconSun, IconMoon, IconEye, IconHistory,
+  IconMenu, IconSun, IconMoon, IconEye, IconHistory, IconReceipt,
 } from "./icons";
 
 function useDropdown<T extends HTMLElement>() {
@@ -73,6 +73,7 @@ export default function Layout({ profile }: { profile: Profile | null }) {
         <div className="nav-label">Catalog</div>
         <NavLink className="nav-item" to="/materials" title="Particulars"><IconBox size={17} /> <span className="nav-text">Particulars</span></NavLink>
         <NavLink className="nav-item" to="/suppliers" title="Suppliers"><IconTruck size={17} /> <span className="nav-text">Suppliers</span></NavLink>
+        <NavLink className="nav-item" to="/receipts" title="Receipts"><IconReceipt size={17} /> <span className="nav-text">Receipts</span></NavLink>
         <NavLink className="nav-item" to="/reports" title="Reports"><IconReport size={17} /> <span className="nav-text">Reports</span></NavLink>
         <NavLink className="nav-item" to="/history" title="History"><IconHistory size={17} /> <span className="nav-text">History</span></NavLink>
         {isOwner && <NavLink className="nav-item" to="/admin" title="Users"><IconUsers size={17} /> <span className="nav-text">Users</span></NavLink>}

@@ -1,8 +1,9 @@
 // Data-access helpers (plain async functions; pages wrap them in TanStack Query).
 import { supabase } from "./supabase";
 import { canonicalKey, buildSearchName, parseParticulars } from "./parse";
+import { toReceiptJpeg } from "./receiptImage";
 import type {
-  Category, Material, MaterialAlias, Profile, Project, PurchaseFlat, SearchHit, Supplier,
+  Category, Material, MaterialAlias, Profile, Project, PurchaseFlat, Receipt, SearchHit, Supplier,
   InvoiceBlock, ParsedParticulars,
 } from "./types";
 
@@ -309,6 +310,137 @@ export async function recordImportBatch(
     .select("*").single();
   if (error) throw error;
   return data;
+}
+
+// --- receipts (photos of sales invoices) -------------------------------------
+
+export async function fetchReceipts(): Promise<Receipt[]> {
+  const { data, error } = await supabase
+    .from("receipts").select("*")
+    .order("purchase_date", { ascending: false })
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data as Receipt[];
+}
+
+/** The receipt photo filed for an invoice block (date + SI# + supplier). */
+export function receiptForBlock(
+  receipts: Receipt[], purchaseDate: string, siNo: string, supplierId: number | null,
+): Receipt | undefined {
+  return receipts.find(
+    (r) => r.purchase_date === purchaseDate
+      && r.si_no === siNo
+      && (r.supplier_id ?? null) === (supplierId ?? null),
+  );
+}
+
+function receiptSetupError(e: { code?: string; message?: string }): Error {
+  const notSetup =
+    e.code === "PGRST205" ||
+    (e.message ?? "").includes("schema cache") ||
+    (e.message ?? "").includes("Could not find the table");
+  if (notSetup) {
+    return new Error(
+      "Receipts aren't in the database yet — run supabase/migration_005_receipts.sql "
+      + "in the Supabase SQL Editor, then try again.",
+    );
+  }
+  return new Error(e.message ?? "The receipt couldn't be saved.");
+}
+
+async function findReceiptRow(
+  purchaseDate: string, siNo: string, supplierId: number | null,
+): Promise<Receipt | null> {
+  let q = supabase.from("receipts").select("*")
+    .eq("purchase_date", purchaseDate).eq("si_no", siNo);
+  q = supplierId == null ? q.is("supplier_id", null) : q.eq("supplier_id", supplierId);
+  const { data, error } = await q.maybeSingle();
+  if (error) throw receiptSetupError(error);
+  return (data as Receipt) ?? null;
+}
+
+/**
+ * File a photo for an invoice block. The image is downscaled to a max-1600px
+ * JPEG in the browser first (phone photos are 3-6MB; receipts stay sharp at a
+ * fraction of that). Filing a block that already has a photo replaces it.
+ */
+export async function uploadReceipt(args: {
+  purchaseDate: string; siNo: string; supplierId: number | null; file: File | Blob;
+}): Promise<{ replaced: boolean }> {
+  const { purchaseDate, siNo, supplierId, file } = args;
+  const { blob } = await toReceiptJpeg(file);
+
+  const existing = await findReceiptRow(purchaseDate, siNo, supplierId);
+
+  const digits = siNo.replace(/\D/g, "");
+  const path =
+    `${purchaseDate}/si${digits ? `-${digits}` : "-none"}_${supplierId ?? 0}_${Date.now()}.jpg`;
+  const { error: upErr } = await supabase.storage
+    .from("receipts").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+  if (upErr) {
+    if ((upErr.message ?? "").includes("Bucket not found") || upErr.statusCode === "404") {
+      throw new Error(
+        "The receipts storage bucket isn't set up yet — run "
+        + "supabase/migration_005_receipts.sql in the Supabase SQL Editor, then try again.",
+      );
+    }
+    throw upErr;
+  }
+
+  // Re-filing a block: swap the old photo out (row + object) before inserting.
+  if (existing) {
+    const { error: delErr } = await supabase.from("receipts").delete().eq("id", existing.id);
+    if (delErr) {
+      await supabase.storage.from("receipts").remove([path]);
+      throw delErr;
+    }
+    await supabase.storage.from("receipts").remove([existing.storage_path]);
+  }
+
+  const { data: me } = await supabase.auth.getUser();
+  const { error: insErr } = await supabase.from("receipts").insert({
+    purchase_date: purchaseDate,
+    si_no: siNo,
+    supplier_id: supplierId,
+    storage_path: path,
+    file_name: file instanceof File ? file.name : "",
+    mime_type: "image/jpeg",
+    file_size: blob.size,
+    uploaded_by: me.user?.id ?? null,
+  });
+  if (insErr) {
+    await supabase.storage.from("receipts").remove([path]); // no orphan photo
+    throw receiptSetupError(insErr);
+  }
+  return { replaced: Boolean(existing) };
+}
+
+/** Delete a filed receipt: the row first, then the stored photo (best-effort —
+ *  a leftover object is harmless, a row pointing at nothing is not). */
+export async function deleteReceipt(id: number, storagePath: string) {
+  const { error } = await supabase.from("receipts").delete().eq("id", id);
+  if (error) throw error;
+  await supabase.storage.from("receipts").remove([storagePath]).catch(() => { /* orphan ok */ });
+}
+
+/** Short-lived view URL for one photo (the bucket is private). */
+export async function signReceiptUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage.from("receipts").createSignedUrl(path, 3600);
+  if (error) throw error;
+  const d = data as { signedUrl?: string; signedURL?: string };
+  return d.signedUrl ?? d.signedURL ?? "";
+}
+
+/** View URLs for a list of photos (thumbnails). Order matches the input. */
+export async function signReceiptUrls(paths: string[]): Promise<(string | null)[]> {
+  if (!paths.length) return [];
+  const { data, error } = await supabase.storage.from("receipts").createSignedUrls(paths, 3600);
+  if (error) throw error;
+  const byPath = new Map(
+    ((data ?? []) as Array<{ path: string; signedUrl?: string; signedURL?: string }>)
+      .map((d) => [d.path, d.signedUrl ?? d.signedURL ?? null] as const),
+  );
+  return paths.map((p) => byPath.get(p) ?? null);
 }
 
 // --- history (activity log) ---------------------------------------------------
