@@ -90,6 +90,10 @@ async function routeSupabase(route) {
     const p = decodeURIComponent(u.pathname.split("/object/sign/receipts/")[1]);
     return route.fulfill(json({ signedURL: `/object/sign/receipts/${p}?token=fake` }));
   }
+  if (url.includes("/storage/v1/object/receipts/") && method === "GET") {
+    const p = decodeURIComponent(u.pathname.split("/object/receipts/")[1]);
+    return route.fulfill({ status: 200, contentType: "image/png", body: bytesFor(p) });
+  }
   if (url.includes("/object/sign/receipts/") && method === "GET") {
     const p = decodeURIComponent(u.pathname.split("/object/sign/receipts/")[1].split("?")[0]);
     return route.fulfill({ status: 200, contentType: "image/png", body: bytesFor(p) });
@@ -114,21 +118,21 @@ await page.addInitScript((ref) => {
 await page.goto(BASE + "/#/receipts", { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".rc-table tbody tr", { timeout: 20000 });
 await page.locator(".rc-thumb-sm").first().waitFor({ state: "visible", timeout: 10000 });
-await sleep(900); // let the signed thumbs decode
+await sleep(900); // let the cached thumbs decode
 await page.screenshot({ path: join(SHOTS, "receipts-tab.png"), fullPage: true });
 console.log("shot receipts-tab.png");
 
-// 2) Ledger — SI# click opens the popover for the block that has a photo
+// 2) Ledger — SI#s with a filed photo read as photo links
 await page.goto(BASE + "/#/", { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
-await page.locator('.pp-table tbody tr:has-text("SI# 1001") .si-link').first().click();
-await page.waitForSelector(".si-pop", { timeout: 5000 });
-await sleep(300);
+await sleep(600); // background photo preload
+await page.locator('.pp-table tbody tr:has-text("SI# 1001") .si-link').first().hover();
+await sleep(200);
 await page.screenshot({ path: join(SHOTS, "ledger-popover.png") });
 console.log("shot ledger-popover.png");
 
-// 3) Viewer modal — the actual receipt photo
-await page.locator('.si-pop button:has-text("View Receipt")').click();
+// 3) Viewer modal — one click on the SI# opens the (preloaded) photo
+await page.locator('.pp-table tbody tr:has-text("SI# 1001") .si-link').first().click();
 await page.waitForSelector(".modal-card .rv-img", { timeout: 10000 });
 await page.locator(".modal-card .rv-img").evaluate(
   (i) => i.complete && i.naturalWidth > 0 ? true : new Promise((res) => { i.onload = () => res(true); }));
@@ -137,7 +141,7 @@ await page.screenshot({ path: join(SHOTS, "receipt-viewer.png") });
 console.log("shot receipt-viewer.png");
 
 // 4) Entry row — staged photo on the attach button, ready to file with Add
-await page.locator(".rv-cap .iconbtn").click(); // close the viewer (it closes the popover with it)
+await page.locator(".rv-cap .iconbtn").click(); // close the viewer
 await page.locator(".pp-draft .pp-si input").fill("555");
 await page.locator('.pp-draft input[placeholder="Select supplier"]').fill("HARDWARE A");
 await page.locator('.pp-draft input[placeholder="Particulars"]').fill("TEST NAIL 1IN");
@@ -148,11 +152,11 @@ await sleep(300);
 await page.screenshot({ path: join(SHOTS, "entry-row-photo.png") });
 console.log("shot entry-row-photo.png");
 
-// 5) Read-Only tab — same popover, view-only (no Add receipt button)
+// 5) Read-Only tab — the same one-click photo, view-only
 await page.goto(BASE + "/#/readonly", { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
 await page.locator('.pp-table tbody tr:has-text("SI# 1001") .si-link').first().click();
-await page.waitForSelector(".si-pop", { timeout: 5000 });
+await page.waitForSelector(".modal-card .rv-img", { timeout: 5000 });
 await sleep(300);
 await page.screenshot({ path: join(SHOTS, "readonly-popover.png") });
 console.log("shot readonly-popover.png");

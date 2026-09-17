@@ -1,7 +1,8 @@
 // Verifies the receipt-photo feature end to end against the mocked DB:
 //   Receipts tab — upload a real photo (downscaled to JPEG client-side),
-//   filed under date + SI# + supplier; list + thumbnails via signed URLs.
-//   Purchases ledger — SI# click opens the popover with "View Receipt" (or
+//   filed under date + SI# + supplier; list + thumbnails from the photo cache.
+//   Purchases ledger — SI# click opens the filed photo directly, already
+//   preloaded into the receipt photo cache (or the popover with
 //   "No receipt found" + Add receipt, which jumps to /receipts prefilled; a
 //   near-miss photo filed under the wrong date/supplier/SI# is named + viewable,
 //   and "Use this photo for this invoice" re-keys it in place via PATCH);
@@ -60,6 +61,7 @@ let receiptSeq = 0;
 const receipts = []; // filled by the upload under test
 const storedObjects = new Set(); // paths uploaded to the mock bucket
 const writes = []; // every mutating call { method, path, body }
+const downloads = []; // photo downloads through the cache (GET /object/receipts/…)
 
 const json = (body, status = 200) => ({
   status, contentType: "application/json",
@@ -153,6 +155,8 @@ async function routeSupabase(route) {
     const path = decodeURIComponent(u.pathname.split("/object/receipts/")[1]);
     if (method === "POST") { storedObjects.add(path); return route.fulfill(json({ Key: `receipts/${path}` })); }
     if (method === "DELETE") { storedObjects.delete(path); return route.fulfill(json([])); }
+    // authenticated download (the receipt photo cache): serves the bytes
+    if (method === "GET") { downloads.push(path); return route.fulfill(png()); }
   }
   if (url.includes("/storage/v1/object/sign/receipts/") && method === "GET") {
     return route.fulfill(png()); // the signed URL itself serves the bytes
@@ -241,14 +245,13 @@ ok("filed receipt listed with supplier",
     .some((t) => t.includes("2026-09-10") && t.includes("SI# 1001") && t.includes("HARDWARE A")));
 const thumbLoaded = await page.locator(".rc-thumb-sm").evaluateAll(
   (imgs) => imgs.length > 0 && imgs.every((i) => i.naturalWidth > 0));
-ok("thumbnail renders through a signed URL", thumbLoaded);
-const signBatch = ws.find((w) => w.method === "POST" && w.path.endsWith("/object/sign/receipts"));
-ok("thumbnails minted via one batched sign call",
-  signBatch !== undefined && Array.isArray(signBatch.body?.paths) &&
-  signBatch.body.paths.some((p) => p.startsWith("2026-09-10/si-1001_1_")),
-  JSON.stringify(signBatch?.body ?? {}));
+ok("thumbnail renders from the receipt photo cache", thumbLoaded);
+ok("thumbnail photo downloaded once, no signing round-trip",
+  downloads.filter((d) => d.startsWith("2026-09-10/si-1001_1_")).length === 1 &&
+  !ws.some((w) => w.path.includes("/object/sign/receipts")),
+  JSON.stringify(downloads));
 
-// ---- ledger: SI# popover → View Receipt → modal --------------------------------
+// ---- ledger: SI# click → the photo, already loaded -----------------------------
 await page.goto(BASE + "/#/", { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
 // the ledger is newest-first, so pin the SI# 1001 row by content —
@@ -257,17 +260,23 @@ const siRow = page.locator('.pp-table tbody tr:has-text("SI# 1001")').first();
 const siLink = siRow.locator(".si-link");
 ok("SI# renders as a link in the ledger", (await siLink.textContent())?.includes("SI# 1001") === true);
 
+ok("SI# with a filed photo is marked as a photo link",
+  (await siLink.getAttribute("class"))?.includes("has-photo") === true);
+// the Receipts tab visit above cached the photo on this PC (IndexedDB), so the
+// reloaded ledger must not download it again — and it must paint at once
+const dl0 = downloads.length;
+await sleep(600); // background preload window
 await siLink.click();
-await page.waitForSelector(".si-pop", { timeout: 5000 });
-ok("popover shows the invoice block + View Receipt",
-  (await page.locator(".si-pop .sp-title").textContent()) === "SI# 1001" &&
-  (await page.locator(".si-pop .sp-sub").textContent())?.includes("2026-09-10 · HARDWARE A") === true &&
-  (await page.locator('.si-pop button:has-text("View Receipt")').count()) === 1);
-
-await page.locator('.si-pop button:has-text("View Receipt")').click();
+const tClick = Date.now();
 await page.waitForSelector(".modal-card .rv-img", { timeout: 10000 });
-ok("viewer modal opens the receipt photo",
+const openMs = Date.now() - tClick;
+ok("one click on the SI# opens the photo directly (no menu step)",
+  (await page.locator(".si-pop").count()) === 0 &&
   await page.locator(".modal-card .rv-img").evaluate((i) => i.naturalWidth > 0));
+ok("photo is already there when clicked (cached, no spinner, no re-download)",
+  openMs < 400 && (await page.locator(".rv-loading").count()) === 0 &&
+  downloads.length === dl0,
+  `opened in ${openMs}ms, downloads ${dl0}→${downloads.length}`);
 ok("viewer caption carries the SI#",
   (await page.locator(".rv-cap b").textContent()) === "SI# 1001");
 await page.locator(".rv-cap .iconbtn").click();
@@ -308,10 +317,11 @@ ok("two receipts now listed",
 await page.goto(BASE + "/#/", { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
 await page.locator('.pp-table tbody tr:has-text("DIESEL") .si-link').click();
-await page.waitForSelector(".si-pop", { timeout: 5000 });
-ok("same-receipt block now shows View Receipt (matched by date + blank SI + supplier)",
-  (await page.locator('.si-pop button:has-text("View Receipt")').count()) === 1,
-  await page.locator(".si-pop").textContent().catch(() => ""));
+await page.waitForSelector(".modal-card .rv-img", { timeout: 10000 });
+ok("same-receipt block opens its photo (matched by date + blank SI + supplier)",
+  (await page.locator(".rv-cap").textContent())?.includes("2026-09-11") === true,
+  await page.locator(".rv-cap").textContent().catch(() => ""));
+await page.locator(".rv-cap .iconbtn").click();
 
 // ---- delete receipt 1: row + stored object, ledger falls back -------------------
 await page.goto(BASE + "/#/receipts", { waitUntil: "domcontentloaded" });
@@ -408,12 +418,12 @@ ok("receipt stored canonically as typed (SI# 2144)", zerosReceipt !== undefined,
 await page.goto(BASE + "/#/", { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
 await page.locator('.pp-table tbody tr:has-text("SI# 002144") .si-link').first().click();
-await page.waitForSelector(".si-pop", { timeout: 5000 });
+await page.waitForSelector(".modal-card .rv-img", { timeout: 10000 });
 ok("typed 2144 matches the ledger's SI# 002144 (leading zeros ignored)",
-  (await page.locator('.si-pop button:has-text("View Receipt")').count()) === 1,
-  await page.locator(".si-pop").textContent().catch(() => ""));
-await page.locator(".pop-backdrop").click(); // close the zeros popover
-await page.waitForSelector(".si-pop", { state: "detached", timeout: 5000 });
+  (await page.locator(".rv-cap b").textContent()) === "SI# 2144",
+  await page.locator(".rv-cap").textContent().catch(() => ""));
+await page.locator(".rv-cap .iconbtn").click();
+await page.waitForSelector(".modal-card", { state: "detached", timeout: 5000 });
 
 // ---- near-miss diagnostics: a misfiled photo must be VISIBLE, not silent --------
 // row 105 (2026-09-15 · CEMENT CO, SI# 2144) — the SI# 2144 photo is filed under

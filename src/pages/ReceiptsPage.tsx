@@ -3,18 +3,34 @@
 // the ledger by clicking the SI# on any matching line (blank-SI "same
 // receipt as above" blocks file one photo keyed to date + supplier).
 // Photos are downscaled to a max-1600px JPEG before upload and live in a
-// PRIVATE storage bucket — every preview mints a short-lived signed URL.
+// PRIVATE storage bucket; thumbnails and the viewer share the receipt photo
+// cache (lib/receiptPhotos), so a photo is downloaded once and kept.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
-import { deleteReceipt, fetchReceipts, fetchSuppliers, signReceiptUrls, uploadReceipt } from "../lib/queries";
+import { deleteReceipt, fetchReceipts, fetchSuppliers, uploadReceipt } from "../lib/queries";
+import { loadReceiptPhoto, peekReceiptPhoto, preloadReceiptPhotos } from "../lib/receiptPhotos";
 import { siDigits, toSiNo, todayISO } from "../lib/format";
 import SiInput from "../components/SiInput";
 import ReceiptViewer from "../components/ReceiptViewer";
 import { IconReceipt, IconTrash, IconUpload } from "../components/icons";
 import type { Receipt } from "../lib/types";
+
+/** List thumbnail — paints instantly when the photo is already cached. */
+function ReceiptThumb({ r, onOpen }: { r: Receipt; onOpen: () => void }) {
+  const [url, setUrl] = useState<string | null>(() => peekReceiptPhoto(r.storage_path));
+  useEffect(() => {
+    let alive = true;
+    loadReceiptPhoto(r.storage_path).then((u) => { if (alive) setUrl(u); }, () => {});
+    return () => { alive = false; };
+  }, [r.storage_path]);
+  return url
+    ? <img className="rc-thumb-sm" src={url} title="View receipt"
+        alt={`Receipt ${r.si_no || r.purchase_date}`} onClick={onOpen} />
+    : <span className="spinner" />;
+}
 
 function fileSizeText(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -59,17 +75,10 @@ export default function ReceiptsPage() {
     return m;
   }, [supsQ.data]);
 
-  // thumbnails: one batched signing call for the whole list
-  const paths = useMemo(() => receipts.map((r) => r.storage_path), [receipts]);
-  const thumbs = useQuery({
-    queryKey: ["receipt-thumbs", paths.join("|")],
-    queryFn: () => signReceiptUrls(paths),
-    enabled: paths.length > 0,
-  });
-  const thumbFor = (r: Receipt) => {
-    const i = paths.indexOf(r.storage_path);
-    return i >= 0 ? (thumbs.data?.[i] ?? null) : null;
-  };
+  // warm the photo cache for the whole list (thumbnails + instant viewer)
+  useEffect(() => {
+    if (receipts.length) preloadReceiptPhotos(receipts.map((r) => r.storage_path));
+  }, [receipts]);
 
   function pickFile(f: File | null) {
     if (preview) URL.revokeObjectURL(preview);
@@ -196,15 +205,10 @@ export default function ReceiptsPage() {
               </thead>
               <tbody>
                 {receipts.map((r) => {
-                  const thumb = thumbFor(r);
                   return (
                     <tr key={r.id}>
                       <td>
-                        {thumb
-                          ? <img className="rc-thumb-sm" src={thumb} title="View receipt"
-                              alt={`Receipt ${r.si_no || r.purchase_date}`}
-                              onClick={() => setViewing(r)} />
-                          : <span className="spinner" />}
+                        <ReceiptThumb r={r} onOpen={() => setViewing(r)} />
                       </td>
                       <td>{r.purchase_date}</td>
                       <td>{r.si_no || <span className="muted">—</span>}</td>

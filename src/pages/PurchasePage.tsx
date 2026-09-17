@@ -6,14 +6,14 @@
 // suppliers, and a near-match asks "did you mean?" before creating anything.
 // Date and Project Name columns are sortable (click the header).
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import {
   addCategory, deletePurchase, ensureMaterial, ensureProject, ensureSupplier, fetchCategories,
   fetchImportBatches, fetchMaterials, fetchProjects, fetchPurchasesFlat, fetchReceipts,
-  fetchSuppliers, matchMaterial, receiptForBlock, receiptMismatch, refileReceipt, updatePurchase,
+  fetchSuppliers, matchMaterial, indexReceipts, receiptMismatch, refileReceipt, updatePurchase,
   uploadReceipt,
 } from "../lib/queries";
 import { filterPurchases, anyFilterOn } from "../lib/filter";
@@ -30,6 +30,7 @@ import ProjectInput from "../components/ProjectInput";
 import SiInput from "../components/SiInput";
 import SupplierInput from "../components/SupplierInput";
 import ReceiptViewer from "../components/ReceiptViewer";
+import { loadReceiptPhoto, preloadReceiptPhotos } from "../lib/receiptPhotos";
 import {
   IconInvoice, IconCalculator, IconTag, IconClock, IconBolt, IconPanelRight,
   IconDownload, IconUpload, IconX, IconPencil, IconTrash,
@@ -81,6 +82,12 @@ export default function PurchasePage() {
   const projQ = useQuery({ queryKey: ["projects"], queryFn: fetchProjects }); // the projects catalog
   const imports = useQuery({ queryKey: ["import-batches"], queryFn: fetchImportBatches });
   const rcpts = useQuery({ queryKey: ["receipts"], queryFn: fetchReceipts }); // receipt photos (ledger SI# links)
+  // photos are ready before the click: every filed photo starts downloading
+  // (newest first) as soon as the receipts list arrives, and is kept on this PC
+  const receiptFor = useMemo(() => indexReceipts(rcpts.data ?? []), [rcpts.data]);
+  useEffect(() => {
+    if (rcpts.data?.length) preloadReceiptPhotos(rcpts.data.map((r) => r.storage_path));
+  }, [rcpts.data]);
   const me = useQuery({
     queryKey: ["me"],
     queryFn: async () => {
@@ -739,10 +746,18 @@ export default function PurchasePage() {
                         ) : (
                           <>
                             <button
-                              className="si-link"
-                              title={r.si_no ? "View this receipt's photo" : "Receipt options for this same-receipt block"}
+                              className={"si-link" + (receiptFor(r.purchase_date, r.si_no, r.supplier_id ?? null) ? " has-photo" : "")}
+                              title={receiptFor(r.purchase_date, r.si_no, r.supplier_id ?? null)
+                                ? "View this receipt's photo" : "Receipt photo options for this invoice"}
+                              onPointerEnter={() => {
+                                const rec = receiptFor(r.purchase_date, r.si_no, r.supplier_id ?? null);
+                                if (rec) void loadReceiptPhoto(rec.storage_path).catch(() => {});
+                              }}
                               onClick={() => {
                                 setRefileErr(null);
+                                // a filed photo opens straight away — no extra menu step
+                                const rec = receiptFor(r.purchase_date, r.si_no, r.supplier_id ?? null);
+                                if (rec) { setSiMenu(null); setViewing(rec); return; }
                                 setSiMenu(siMenu?.rowId === r.id ? null : {
                                   rowId: r.id,
                                   date: r.purchase_date,
@@ -761,8 +776,11 @@ export default function PurchasePage() {
                                   <div className="sp-title">{siMenu.si || "No invoice #"}</div>
                                   <div className="sp-sub">{siMenu.date} · {siMenu.supName || "—"}</div>
                                   {(() => {
+                                    if (rcpts.isLoading) {
+                                      return <div className="sp-none"><span className="spinner" /> Checking for a receipt photo…</div>;
+                                    }
                                     const all = rcpts.data ?? [];
-                                    const rec = receiptForBlock(all, siMenu.date, siMenu.si, siMenu.supId);
+                                    const rec = receiptFor(siMenu.date, siMenu.si, siMenu.supId);
                                     if (rec) {
                                       return (
                                         <button className="mi primary" onClick={() => { setViewing(rec); setSiMenu(null); }}>

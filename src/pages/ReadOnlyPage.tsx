@@ -4,9 +4,10 @@
 // value suggestions, date range, supplier, project, status and category.
 // For viewers who only need to look things up.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchCategories, fetchPurchasesFlat, fetchReceipts, fetchSuppliers, receiptForBlock, receiptMismatch } from "../lib/queries";
+import { fetchCategories, fetchPurchasesFlat, fetchReceipts, fetchSuppliers, indexReceipts, receiptMismatch } from "../lib/queries";
+import { loadReceiptPhoto, preloadReceiptPhotos } from "../lib/receiptPhotos";
 import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { displayParticulars, php } from "../lib/format";
 import { comparePurchases, type SortDir, type SortKey } from "../lib/sort";
@@ -45,6 +46,13 @@ export default function ReadOnlyPage() {
   }
 
   const rows = ledger.data ?? [];
+
+  // photos are ready before the click: every filed photo starts downloading
+  // (newest first) as soon as the receipts list arrives, and is kept on this PC
+  const receiptFor = useMemo(() => indexReceipts(rcpts.data ?? []), [rcpts.data]);
+  useEffect(() => {
+    if (rcpts.data?.length) preloadReceiptPhotos(rcpts.data.map((r) => r.storage_path));
+  }, [rcpts.data]);
 
   // distinct project names for the toolbar dropdown (case-insensitive,
   // first-seen casing kept, blanks never listed)
@@ -182,15 +190,25 @@ export default function ReadOnlyPage() {
                   <td>{r.purchase_date}</td>
                   <td className="si-cell">
                     <button
-                      className="si-link"
-                      title={r.si_no ? "View this receipt's photo" : "Receipt options for this same-receipt block"}
-                      onClick={() => setSiMenu(siMenu?.rowId === r.id ? null : {
-                        rowId: r.id,
-                        date: r.purchase_date,
-                        si: r.si_no,
-                        supId: r.supplier_id ?? null,
-                        supName: r.supplier ?? "",
-                      })}
+                      className={"si-link" + (receiptFor(r.purchase_date, r.si_no, r.supplier_id ?? null) ? " has-photo" : "")}
+                      title={receiptFor(r.purchase_date, r.si_no, r.supplier_id ?? null)
+                        ? "View this receipt's photo" : "Receipt photo for this invoice"}
+                      onPointerEnter={() => {
+                        const rec = receiptFor(r.purchase_date, r.si_no, r.supplier_id ?? null);
+                        if (rec) void loadReceiptPhoto(rec.storage_path).catch(() => {});
+                      }}
+                      onClick={() => {
+                        // a filed photo opens straight away — no extra menu step
+                        const rec = receiptFor(r.purchase_date, r.si_no, r.supplier_id ?? null);
+                        if (rec) { setSiMenu(null); setViewing(rec); return; }
+                        setSiMenu(siMenu?.rowId === r.id ? null : {
+                          rowId: r.id,
+                          date: r.purchase_date,
+                          si: r.si_no,
+                          supId: r.supplier_id ?? null,
+                          supName: r.supplier ?? "",
+                        });
+                      }}
                     >
                       {r.si_no || <span className="muted">—</span>}
                     </button>
@@ -201,8 +219,11 @@ export default function ReadOnlyPage() {
                           <div className="sp-title">{siMenu.si || "No invoice #"}</div>
                           <div className="sp-sub">{siMenu.date} · {siMenu.supName || "—"}</div>
                           {(() => {
+                            if (rcpts.isLoading) {
+                              return <div className="sp-none"><span className="spinner" /> Checking for a receipt photo…</div>;
+                            }
                             const all = rcpts.data ?? [];
-                            const rec = receiptForBlock(all, siMenu.date, siMenu.si, siMenu.supId);
+                            const rec = receiptFor(siMenu.date, siMenu.si, siMenu.supId);
                             if (rec) {
                               return (
                                 <button className="mi primary" onClick={() => { setViewing(rec); setSiMenu(null); }}>

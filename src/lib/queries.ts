@@ -2,6 +2,7 @@
 import { supabase } from "./supabase";
 import { canonicalKey, buildSearchName, parseParticulars } from "./parse";
 import { toReceiptJpeg } from "./receiptImage";
+import { forgetReceiptPhoto } from "./receiptPhotos";
 import type {
   Category, Material, MaterialAlias, Profile, Project, PurchaseFlat, Receipt, SearchHit, Supplier,
   InvoiceBlock, ParsedParticulars,
@@ -357,6 +358,17 @@ export function receiptForBlock(
   );
 }
 
+/** receiptForBlock for a whole ledger: one Map built once, O(1) per row. */
+export function indexReceipts(receipts: Receipt[]) {
+  const key = (date: string, si: string, sup: number | null) => `${date}|${siKey(si)}|${sup ?? ""}`;
+  const m = new Map<string, Receipt>();
+  for (const r of receipts) {
+    const k = key(r.purchase_date, r.si_no, r.supplier_id ?? null);
+    if (!m.has(k)) m.set(k, r); // same first-wins order as receiptForBlock
+  }
+  return (date: string, si: string, sup: number | null): Receipt | undefined => m.get(key(date, si, sup));
+}
+
 /** Why a block has no exact receipt match, when a near-miss exists. The ledger
  *  popover shows this so a photo filed under the wrong date / supplier (or a
  *  blank-SI "same receipt" photo) is VISIBLE instead of reading as "no photo
@@ -465,6 +477,7 @@ export async function uploadReceipt(args: {
       throw delErr;
     }
     await supabase.storage.from("receipts").remove([existing.storage_path]);
+    forgetReceiptPhoto(existing.storage_path);
     await logActivity("delete", "receipts", existing.id,
       receiptLabel(existing.si_no, existing.purchase_date, existing.file_name)
         + " — replaced by a new photo",
@@ -535,6 +548,7 @@ export async function deleteReceipt(rcpt: Receipt) {
   const { error } = await supabase.from("receipts").delete().eq("id", rcpt.id);
   if (error) throw error;
   await supabase.storage.from("receipts").remove([rcpt.storage_path]).catch(() => { /* orphan ok */ });
+  forgetReceiptPhoto(rcpt.storage_path);
   await logActivity("delete", "receipts", rcpt.id,
     receiptLabel(rcpt.si_no, rcpt.purchase_date, rcpt.file_name),
     { storage_path: rcpt.storage_path });

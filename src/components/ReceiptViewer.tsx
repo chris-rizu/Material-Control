@@ -1,9 +1,10 @@
 // ReceiptViewer — the photo preview modal shared by the Purchases and
-// Read-Only ledgers (and the Receipts tab). Signing is per-open: the bucket
-// is private, so every view mints a fresh one-hour signed URL.
+// Read-Only ledgers (and the Receipts tab). Photos come from the receipt
+// photo cache (lib/receiptPhotos): preloaded photos open on the same frame,
+// anything else is downloaded once and kept.
 
-import { useEffect, useState } from "react";
-import { signReceiptUrl } from "../lib/queries";
+import { useEffect, useRef, useState } from "react";
+import { loadReceiptPhoto, peekReceiptPhoto } from "../lib/receiptPhotos";
 import type { Receipt } from "../lib/types";
 import { IconX } from "./icons";
 
@@ -13,24 +14,28 @@ export default function ReceiptViewer({
   receipt: Receipt | null;
   onClose: () => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const path = receipt?.storage_path ?? "";
+  const [url, setUrl] = useState<string | null>(() => (path ? peekReceiptPhoto(path) : null));
   const [err, setErr] = useState("");
+  // parents pass an inline onClose — keep the latest without re-running the load
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
-    setUrl(null);
     setErr("");
-    if (!receipt) return;
+    if (!path) { setUrl(null); return; }
+    setUrl(peekReceiptPhoto(path));
     let alive = true;
-    signReceiptUrl(receipt.storage_path)
+    loadReceiptPhoto(path)
       .then((u) => { if (alive) setUrl(u); })
       .catch((e: Error) => { if (alive) setErr(e.message || String(e)); });
-    const onKey = (ev: KeyboardEvent) => ev.key === "Escape" && onClose();
+    const onKey = (ev: KeyboardEvent) => ev.key === "Escape" && closeRef.current();
     document.addEventListener("keydown", onKey);
     return () => {
       alive = false;
       document.removeEventListener("keydown", onKey);
     };
-  }, [receipt, onClose]);
+  }, [path]);
 
   if (!receipt) return null;
   return (

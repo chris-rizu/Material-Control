@@ -91,6 +91,9 @@ async function routeSupabase(route) {
     }
     return route.fulfill(json([...receipts]));
   }
+  if (url.includes("/storage/v1/object/receipts/") && method === "GET") {
+    return route.fulfill(png()); // authenticated download (receipt photo cache)
+  }
   if (url.includes("/storage/v1/object/sign/receipts/") && method === "GET") {
     return route.fulfill(png()); // the signed URL itself serves the bytes
   }
