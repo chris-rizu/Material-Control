@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchCategories, fetchPurchasesFlat, fetchReceipts, fetchSuppliers, receiptForBlock } from "../lib/queries";
+import { fetchCategories, fetchPurchasesFlat, fetchReceipts, fetchSuppliers, receiptForBlock, receiptMismatch } from "../lib/queries";
 import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { displayParticulars, php } from "../lib/format";
 import { comparePurchases, type SortDir, type SortKey } from "../lib/sort";
@@ -201,13 +201,39 @@ export default function ReadOnlyPage() {
                           <div className="sp-title">{siMenu.si || "No invoice #"}</div>
                           <div className="sp-sub">{siMenu.date} · {siMenu.supName || "—"}</div>
                           {(() => {
-                            const rec = receiptForBlock(rcpts.data ?? [], siMenu.date, siMenu.si, siMenu.supId);
-                            return rec ? (
-                              <button className="mi primary" onClick={() => { setViewing(rec); setSiMenu(null); }}>
-                                <IconInvoice size={15} /> View Receipt
-                              </button>
-                            ) : (
-                              <div className="sp-none">No receipt photo yet.</div>
+                            const all = rcpts.data ?? [];
+                            const rec = receiptForBlock(all, siMenu.date, siMenu.si, siMenu.supId);
+                            if (rec) {
+                              return (
+                                <button className="mi primary" onClick={() => { setViewing(rec); setSiMenu(null); }}>
+                                  <IconInvoice size={15} /> View Receipt
+                                </button>
+                              );
+                            }
+                            const miss = receiptMismatch(all, siMenu.date, siMenu.si, siMenu.supId);
+                            const missSup = (id: number | null) =>
+                              id == null ? "—"
+                                : (sups.data ?? []).find((s) => s.id === id)?.name ?? "a supplier";
+                            return (
+                              <>
+                                <div className="sp-none">No receipt found.</div>
+                                {miss && (
+                                  <>
+                                    <div className="sp-hint">
+                                      {miss.reason === "si"
+                                        ? <>A photo for {miss.receipt.si_no || "this SI#"} is filed under{" "}
+                                            <b>{miss.receipt.purchase_date} · {missSup(miss.receipt.supplier_id)}</b>{" "}
+                                            — a different date or supplier than this line.</>
+                                        : <>A photo for <b>{miss.receipt.purchase_date} · {missSup(miss.receipt.supplier_id)}</b>{" "}
+                                            is filed as {miss.receipt.si_no ? `“${miss.receipt.si_no}”` : "no invoice #"} —
+                                            not this exact SI#.</>}
+                                    </div>
+                                    <button className="mi" onClick={() => { setViewing(miss.receipt); setSiMenu(null); }}>
+                                      <IconInvoice size={15} /> View the filed photo
+                                    </button>
+                                  </>
+                                )}
+                              </>
                             );
                           })()}
                         </div>

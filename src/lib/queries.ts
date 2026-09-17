@@ -357,6 +357,27 @@ export function receiptForBlock(
   );
 }
 
+/** Why a block has no exact receipt match, when a near-miss exists. The ledger
+ *  popover shows this so a photo filed under the wrong date / supplier (or a
+ *  blank-SI "same receipt" photo) is VISIBLE instead of reading as "no photo
+ *  was ever added". Checked after receiptForBlock comes up empty. */
+export function receiptMismatch(
+  receipts: Receipt[], purchaseDate: string, siNo: string, supplierId: number | null,
+): { reason: "si" | "block"; receipt: Receipt } | null {
+  const key = siKey(siNo);
+  if (key) {
+    // same invoice number, but filed under another date and/or supplier
+    const bySi = receipts.find((r) => siKey(r.si_no) === key);
+    if (bySi) return { reason: "si", receipt: bySi };
+  }
+  // same receipt block (date + supplier), but keyed without this SI#
+  const byBlock = receipts.find(
+    (r) => r.purchase_date === purchaseDate
+      && (r.supplier_id ?? null) === (supplierId ?? null),
+  );
+  return byBlock ? { reason: "block", receipt: byBlock } : null;
+}
+
 function receiptSetupError(e: { code?: string; message?: string }): Error {
   const notSetup =
     e.code === "PGRST205" ||

@@ -13,7 +13,7 @@ import { supabase } from "../lib/supabase";
 import {
   addCategory, deletePurchase, ensureMaterial, ensureProject, ensureSupplier, fetchCategories,
   fetchImportBatches, fetchMaterials, fetchProjects, fetchPurchasesFlat, fetchReceipts,
-  fetchSuppliers, matchMaterial, receiptForBlock, updatePurchase, uploadReceipt,
+  fetchSuppliers, matchMaterial, receiptForBlock, receiptMismatch, updatePurchase, uploadReceipt,
 } from "../lib/queries";
 import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { parseParticulars } from "../lib/parse";
@@ -726,14 +726,41 @@ export default function PurchasePage() {
                                   <div className="sp-title">{siMenu.si || "No invoice #"}</div>
                                   <div className="sp-sub">{siMenu.date} · {siMenu.supName || "—"}</div>
                                   {(() => {
-                                    const rec = receiptForBlock(rcpts.data ?? [], siMenu.date, siMenu.si, siMenu.supId);
-                                    return rec ? (
-                                      <button className="mi primary" onClick={() => { setViewing(rec); setSiMenu(null); }}>
-                                        <IconInvoice size={15} /> View Receipt
-                                      </button>
-                                    ) : (
+                                    const all = rcpts.data ?? [];
+                                    const rec = receiptForBlock(all, siMenu.date, siMenu.si, siMenu.supId);
+                                    if (rec) {
+                                      return (
+                                        <button className="mi primary" onClick={() => { setViewing(rec); setSiMenu(null); }}>
+                                          <IconInvoice size={15} /> View Receipt
+                                        </button>
+                                      );
+                                    }
+                                    // no exact match — show a near-miss photo (filed under the
+                                    // wrong date/supplier, or as a blank-SI same-receipt photo)
+                                    // instead of silently reading as "nothing was ever added"
+                                    const miss = receiptMismatch(all, siMenu.date, siMenu.si, siMenu.supId);
+                                    const missSup = (id: number | null) =>
+                                      id == null ? "—"
+                                        : (sups.data ?? []).find((s) => s.id === id)?.name ?? "a supplier";
+                                    return (
                                       <>
-                                        <div className="sp-none">No receipt photo yet.</div>
+                                        <div className="sp-none">No receipt found.</div>
+                                        {miss && (
+                                          <>
+                                            <div className="sp-hint">
+                                              {miss.reason === "si"
+                                                ? <>A photo for {miss.receipt.si_no || "this SI#"} is filed under{" "}
+                                                    <b>{miss.receipt.purchase_date} · {missSup(miss.receipt.supplier_id)}</b>{" "}
+                                                    — a different date or supplier than this line.</>
+                                                : <>A photo for <b>{miss.receipt.purchase_date} · {missSup(miss.receipt.supplier_id)}</b>{" "}
+                                                    is filed as {miss.receipt.si_no ? `“${miss.receipt.si_no}”` : "no invoice #"} —
+                                                    not this exact SI#.</>}
+                                            </div>
+                                            <button className="mi" onClick={() => { setViewing(miss.receipt); setSiMenu(null); }}>
+                                              <IconInvoice size={15} /> View the filed photo
+                                            </button>
+                                          </>
+                                        )}
                                         <button className="mi" onClick={() => {
                                           const s = siMenu;
                                           setSiMenu(null);
@@ -741,7 +768,7 @@ export default function PurchasePage() {
                                             state: { purchase_date: s.date, si_no: s.si, supplier_id: s.supId },
                                           });
                                         }}>
-                                          <IconPlus size={15} /> Add receipt
+                                          <IconPlus size={15} /> Add receipt for this invoice
                                         </button>
                                       </>
                                     );

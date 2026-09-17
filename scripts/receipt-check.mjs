@@ -2,10 +2,11 @@
 //   Receipts tab — upload a real photo (downscaled to JPEG client-side),
 //   filed under date + SI# + supplier; list + thumbnails via signed URLs.
 //   Purchases ledger — SI# click opens the popover with "View Receipt" (or
-//   "No receipt photo yet" + Add receipt, which jumps to /receipts prefilled);
+//   "No receipt found" + Add receipt, which jumps to /receipts prefilled; a
+//   near-miss photo filed under the wrong date/supplier/SI# is named + viewable);
 //   the viewer modal shows the actual photo. Blank-SI same-receipt blocks
 //   share the photo keyed to date + supplier. Delete removes row + object and
-//   the ledger popover falls back to "No receipt photo yet".
+//   the ledger popover falls back to "No receipt found".
 // Storage (upload/sign/remove) and receipts REST calls are recorded + asserted.
 import { chromium } from "playwright-core";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -38,6 +39,11 @@ const flat = [
   // the xlsx ledger keeps leading zeros ("SI# 002144") while the SI box stores
   // plain digits — matching must pair them through the canonical key
   flatRow(104, "2026-09-12", "SI# 002144", 1, "MOLDEX PVC PIPE 2IN", "PVC Pipes & Fittings"),
+  // near-miss rows: a photo filed under the WRONG supplier/date (105) and a
+  // same-block photo without the SI# (106) must surface in the popover instead
+  // of silently reading as "no receipt"
+  flatRow(105, "2026-09-15", "SI# 2144", 2, "MOLDEX PVC ELBOW 2X45", "PVC Pipes & Fittings"),
+  flatRow(106, "2026-09-11", "SI# 7777", 2, "MOLDEX PVC CAP 2IN", "PVC Pipes & Fittings"),
 ];
 function flatRow(id, date, siNo, supplierId, material, category) {
   const sup = suppliers.find((s) => s.id === supplierId);
@@ -261,11 +267,12 @@ await page.locator(".rv-cap .iconbtn").click();
 ok("viewer closes", (await page.locator(".modal-card").count()) === 0);
 
 // ---- blank-SI same-receipt block: no photo → Add receipt jump, prefill ---------
-const dashLink = page.locator('.pp-table tbody tr:has-text("CEMENT CO") .si-link');
+// pin by particulars — the ledger now has TWO CEMENT CO rows (103 + 106)
+const dashLink = page.locator('.pp-table tbody tr:has-text("DIESEL") .si-link');
 await dashLink.click();
 await page.waitForSelector(".si-pop", { timeout: 5000 });
-ok("blank-SI popover explains no photo yet + offers Add receipt",
-  (await page.locator(".si-pop .sp-none").textContent())?.includes("No receipt photo yet") === true &&
+ok("blank-SI popover says No receipt found + offers Add receipt",
+  (await page.locator(".si-pop .sp-none").textContent())?.includes("No receipt found") === true &&
   (await page.locator('.si-pop button:has-text("Add receipt")').count()) === 1);
 await page.locator('.si-pop button:has-text("Add receipt")').click();
 await page.waitForSelector('h1:text-is("Receipts")', { timeout: 10000 });
@@ -293,7 +300,7 @@ ok("two receipts now listed",
 // ---- ledger: the same-receipt block now views its photo -------------------------
 await page.goto(BASE + "/#/", { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
-await page.locator('.pp-table tbody tr:has-text("CEMENT CO") .si-link').click();
+await page.locator('.pp-table tbody tr:has-text("DIESEL") .si-link').click();
 await page.waitForSelector(".si-pop", { timeout: 5000 });
 ok("same-receipt block now shows View Receipt (matched by date + blank SI + supplier)",
   (await page.locator('.si-pop button:has-text("View Receipt")').count()) === 1,
@@ -328,8 +335,8 @@ await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
 // reopen the deleted SI# 1001 block by content (.first() is CEMENT CO, which has a photo)
 await page.locator('.pp-table tbody tr:has-text("SI# 1001") .si-link').first().click();
 await page.waitForSelector(".si-pop", { timeout: 5000 });
-ok("deleted block's popover falls back to No receipt photo yet",
-  (await page.locator(".si-pop .sp-none").textContent())?.includes("No receipt photo yet") === true,
+ok("deleted block's popover falls back to No receipt found",
+  (await page.locator(".si-pop .sp-none").textContent())?.includes("No receipt found") === true,
   await page.locator(".si-pop").textContent().catch(() => ""));
 await page.locator(".pop-backdrop").click(); // close the popover — its backdrop eats clicks
 
@@ -398,6 +405,36 @@ await page.waitForSelector(".si-pop", { timeout: 5000 });
 ok("typed 2144 matches the ledger's SI# 002144 (leading zeros ignored)",
   (await page.locator('.si-pop button:has-text("View Receipt")').count()) === 1,
   await page.locator(".si-pop").textContent().catch(() => ""));
+await page.locator(".pop-backdrop").click(); // close the zeros popover
+await page.waitForSelector(".si-pop", { state: "detached", timeout: 5000 });
+
+// ---- near-miss diagnostics: a misfiled photo must be VISIBLE, not silent --------
+// row 105 (2026-09-15 · CEMENT CO, SI# 2144) — the SI# 2144 photo is filed under
+// 2026-09-12 · HARDWARE A, so the popover must say exactly that
+await page.locator('.pp-table tbody tr:has-text("2026-09-15") .si-link').click();
+await page.waitForSelector(".si-pop", { timeout: 5000 });
+ok("wrong-date/supplier popover: No receipt found + names the filed one",
+  (await page.locator(".si-pop .sp-none").textContent())?.includes("No receipt found") === true &&
+  (await page.locator(".si-pop .sp-hint").textContent())?.includes("2026-09-12 · HARDWARE A") === true &&
+  (await page.locator(".si-pop .sp-hint").textContent())?.includes("different date or supplier") === true,
+  await page.locator(".si-pop").textContent().catch(() => ""));
+await page.locator('.si-pop button:has-text("View the filed photo")').click();
+await page.waitForSelector(".modal-card .rv-img", { timeout: 10000 });
+ok("near-miss photo opens from the popover",
+  await page.locator(".modal-card .rv-img").evaluate((i) => i.naturalWidth > 0));
+await page.locator(".rv-cap .iconbtn").click();
+await page.waitForSelector(".modal-card", { state: "detached", timeout: 5000 });
+
+// row 106 (2026-09-11 · CEMENT CO, SI# 7777) — a blank-SI photo exists for that
+// same date+supplier block, filed without any SI#
+await page.locator('.pp-table tbody tr:has-text("SI# 7777") .si-link').click();
+await page.waitForSelector(".si-pop", { timeout: 5000 });
+ok("same-block-without-SI popover: No receipt found + filed-as hint",
+  (await page.locator(".si-pop .sp-none").textContent())?.includes("No receipt found") === true &&
+  (await page.locator(".si-pop .sp-hint").textContent())?.includes("filed as no invoice #") === true,
+  await page.locator(".si-pop").textContent().catch(() => ""));
+await page.locator(".pop-backdrop").click(); // close the popover — its backdrop eats clicks
+await page.waitForSelector(".si-pop", { state: "detached", timeout: 5000 });
 
 // ---- history: receipt adds and deletes land in the activity log -----------------
 let actIns, actDel;
