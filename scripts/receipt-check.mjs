@@ -3,7 +3,8 @@
 //   filed under date + SI# + supplier; list + thumbnails via signed URLs.
 //   Purchases ledger — SI# click opens the popover with "View Receipt" (or
 //   "No receipt found" + Add receipt, which jumps to /receipts prefilled; a
-//   near-miss photo filed under the wrong date/supplier/SI# is named + viewable);
+//   near-miss photo filed under the wrong date/supplier/SI# is named + viewable,
+//   and "Use this photo for this invoice" re-keys it in place via PATCH);
 //   the viewer modal shows the actual photo. Blank-SI same-receipt blocks
 //   share the photo keyed to date + supplier. Delete removes row + object and
 //   the ledger popover falls back to "No receipt found".
@@ -125,6 +126,12 @@ async function routeSupabase(route) {
       const i = receipts.findIndex((r) => r.id === id);
       if (i >= 0) receipts.splice(i, 1);
       return route.fulfill({ status: 204 });
+    }
+    if (method === "PATCH") {
+      // refileReceipt: update().eq(id).select("id") — apply and echo the id
+      const row = receipts.find((r) => r.id === Number(eqParam("id")));
+      if (row) Object.assign(row, body());
+      return route.fulfill(json(row ? [{ id: row.id }] : []));
     }
     if (method === "GET") {
       // findReceiptRow sends block filters; the list query sends none
@@ -436,13 +443,43 @@ ok("same-block-without-SI popover: No receipt found + filed-as hint",
 await page.locator(".pop-backdrop").click(); // close the popover — its backdrop eats clicks
 await page.waitForSelector(".si-pop", { state: "detached", timeout: 5000 });
 
-// ---- history: receipt adds and deletes land in the activity log -----------------
-let actIns, actDel;
-for (let i = 0; i < 80 && !(actIns && actDel); i++) {
+// ---- one-click refile: fix a mistyped SI# without re-uploading ------------------
+// row 106's block photo was filed without an SI# — "Use this photo for this
+// invoice" re-keys it to SI# 7777 in place (PATCH) and the popover flips to an
+// exact match. This is the live case: a photo uploaded as SI# 292173 vs the
+// ledger's SI# 292713 heals with one click instead of delete + re-upload.
+await page.locator('.pp-table tbody tr:has-text("SI# 7777") .si-link').click();
+await page.waitForSelector(".si-pop", { timeout: 5000 });
+const n1 = writes.length;
+await page.locator('.si-pop button:has-text("Use this photo for this invoice")').click();
+let patch;
+for (let i = 0; i < 50 && !patch; i++) {
+  patch = writes.slice(n1).find((w) => w.method === "PATCH" && w.path.includes("/rest/v1/receipts"));
+  if (!patch) await sleep(100);
+}
+ok("refile sends PATCH with this block's keys",
+  patch !== undefined && patch.body?.si_no === "SI# 7777" &&
+  patch.body?.purchase_date === "2026-09-11" && patch.body?.supplier_id === 2,
+  JSON.stringify(patch ?? {}));
+await page.locator('.si-pop button:has-text("View Receipt")').waitFor({ timeout: 10000 });
+ok("popover flips to an exact match after refile",
+  (await page.locator('.si-pop button:has-text("View Receipt")').count()) === 1,
+  await page.locator(".si-pop").textContent().catch(() => ""));
+await page.locator('.si-pop button:has-text("View Receipt")').click();
+await page.waitForSelector(".modal-card .rv-img", { timeout: 10000 });
+ok("refiled photo opens as the block's View Receipt",
+  await page.locator(".modal-card .rv-img").evaluate((i) => i.naturalWidth > 0));
+await page.locator(".rv-cap .iconbtn").click();
+await page.waitForSelector(".modal-card", { state: "detached", timeout: 5000 });
+
+// ---- history: receipt adds, deletes and refiles land in the activity log --------
+let actIns, actDel, actUpd;
+for (let i = 0; i < 80 && !(actIns && actDel && actUpd); i++) {
   const acts = writes.filter((w) => w.path.includes("/rest/v1/activity_log"));
   actIns = acts.find((w) => w.body?.action === "insert" && w.body?.table_name === "receipts");
   actDel = acts.find((w) => w.body?.action === "delete" && w.body?.table_name === "receipts");
-  if (!(actIns && actDel)) await sleep(100);
+  actUpd = acts.find((w) => w.body?.action === "update" && w.body?.table_name === "receipts");
+  if (!(actIns && actDel && actUpd)) await sleep(100);
 }
 ok("history logs every receipt add (who + which block)",
   actIns !== undefined && typeof actIns.body?.summary === "string" &&
@@ -451,6 +488,10 @@ ok("history logs every receipt add (who + which block)",
 ok("history logs the receipt delete from earlier",
   actDel !== undefined && actDel.body?.summary.includes("Receipt photo —"),
   JSON.stringify(actDel?.body ?? {}));
+ok("history logs the refile with from → to",
+  actUpd !== undefined && actUpd.body?.summary.includes("re-filed from") &&
+  actUpd.body?.details?.from?.si_no === "" && actUpd.body?.details?.to?.si_no === "SI# 7777",
+  JSON.stringify(actUpd?.body ?? {}));
 
 console.log(results.join("\n"));
 await browser.close();

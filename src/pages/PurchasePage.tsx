@@ -13,7 +13,8 @@ import { supabase } from "../lib/supabase";
 import {
   addCategory, deletePurchase, ensureMaterial, ensureProject, ensureSupplier, fetchCategories,
   fetchImportBatches, fetchMaterials, fetchProjects, fetchPurchasesFlat, fetchReceipts,
-  fetchSuppliers, matchMaterial, receiptForBlock, receiptMismatch, updatePurchase, uploadReceipt,
+  fetchSuppliers, matchMaterial, receiptForBlock, receiptMismatch, refileReceipt, updatePurchase,
+  uploadReceipt,
 } from "../lib/queries";
 import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { parseParticulars } from "../lib/parse";
@@ -114,6 +115,18 @@ export default function PurchasePage() {
     rowId: number; date: string; si: string; supId: number | null; supName: string;
   } | null>(null);
   const [viewing, setViewing] = useState<Receipt | null>(null);
+  // "Use this photo for this invoice": re-keys a near-miss receipt to this
+  // block in place (mistyped SI# / wrong date at upload). The popover stays
+  // open — once ["receipts"] refetches it re-renders as an exact match.
+  const [refileErr, setRefileErr] = useState<string | null>(null);
+  const refile = useMutation({
+    mutationFn: (rcpt: Receipt) =>
+      refileReceipt(rcpt, {
+        purchaseDate: siMenu!.date, siNo: siMenu!.si, supplierId: siMenu!.supId,
+      }),
+    onSuccess: () => { setRefileErr(null); qc.invalidateQueries({ queryKey: ["receipts"] }); },
+    onError: (e: Error) => setRefileErr(e.message),
+  });
   // staged receipt photo for the entry row — files with Add against the
   // line's invoice block (date + SI# + supplier), one photo per receipt
   const [draftPhoto, setDraftPhoto] = useState<File | null>(null);
@@ -127,6 +140,15 @@ export default function PurchasePage() {
     if (draftPhotoUrl) URL.revokeObjectURL(draftPhotoUrl);
     setDraftPhoto(null);
     setDraftPhotoUrl("");
+  }
+  // staged receipt photo for the EDIT row — same idea: files with Save
+  // against the line's (possibly corrected) invoice block
+  const [editPhoto, setEditPhoto] = useState<File | null>(null);
+  const [editPhotoUrl, setEditPhotoUrl] = useState("");
+  function stageEditPhoto(f: File | null) {
+    if (editPhotoUrl) URL.revokeObjectURL(editPhotoUrl);
+    setEditPhoto(f);
+    setEditPhotoUrl(f ? URL.createObjectURL(f) : "");
   }
   // sortable headers (Date, Project Name) — newest-first by default
   const [sortKey, setSortKey] = useState<SortKey>("date");
@@ -394,8 +416,8 @@ export default function PurchasePage() {
   }
 
   const commitEdit = useMutation({
-    mutationFn: async (args: { id: number; d: Draft }) => {
-      const { id, d } = args;
+    mutationFn: async (args: { id: number; d: Draft; photo: File | null }) => {
+      const { id, d, photo } = args;
       if (!d.date) throw new Error("Date is required.");
       if (!d.particulars.trim()) throw new Error("Particulars are required.");
       const price = Number(d.price);
@@ -429,10 +451,19 @@ export default function PurchasePage() {
       if (d.project.trim()) {
         try { await ensureProject(d.project); } catch { /* catalog is optional */ }
       }
+      if (photo) {
+        // attach/replace this line's receipt photo, filed against the block
+        // as just edited (a corrected SI# re-files the photo with it)
+        await uploadReceipt({
+          purchaseDate: d.date, siNo: toSiNo(d.si), supplierId: supplier.id, file: photo,
+        });
+        qc.invalidateQueries({ queryKey: ["receipts"] });
+      }
     },
     onSuccess: () => {
       setEditId(null);
       setEditSupNew(false);
+      stageEditPhoto(null);
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
@@ -449,6 +480,7 @@ export default function PurchasePage() {
   function startEdit(r: PurchaseFlat) {
     setEditId(r.id);
     setEditSupNew(false);
+    stageEditPhoto(null); // each edit starts with a clean photo attach
     setEditMatId(r.material_id ?? null); // the row's own price belongs to this material
     setEditDraft({
       date: r.purchase_date,
@@ -709,13 +741,16 @@ export default function PurchasePage() {
                             <button
                               className="si-link"
                               title={r.si_no ? "View this receipt's photo" : "Receipt options for this same-receipt block"}
-                              onClick={() => setSiMenu(siMenu?.rowId === r.id ? null : {
-                                rowId: r.id,
-                                date: r.purchase_date,
-                                si: r.si_no,
-                                supId: r.supplier_id ?? null,
-                                supName: r.supplier ?? "",
-                              })}
+                              onClick={() => {
+                                setRefileErr(null);
+                                setSiMenu(siMenu?.rowId === r.id ? null : {
+                                  rowId: r.id,
+                                  date: r.purchase_date,
+                                  si: r.si_no,
+                                  supId: r.supplier_id ?? null,
+                                  supName: r.supplier ?? "",
+                                });
+                              }}
                             >
                               {r.si_no || <span className="muted">—</span>}
                             </button>
@@ -759,6 +794,12 @@ export default function PurchasePage() {
                                             <button className="mi" onClick={() => { setViewing(miss.receipt); setSiMenu(null); }}>
                                               <IconInvoice size={15} /> View the filed photo
                                             </button>
+                                            <button className="mi" disabled={refile.isPending}
+                                              onClick={() => refile.mutate(miss.receipt)}>
+                                              <IconCheck size={15} />
+                                              {refile.isPending ? "Filing…" : "Use this photo for this invoice"}
+                                            </button>
+                                            {refileErr && <div className="sp-hint err">{refileErr}</div>}
                                           </>
                                         )}
                                         <button className="mi" onClick={() => {
@@ -830,9 +871,20 @@ export default function PurchasePage() {
                           <td className="actions">
                             {editing ? (
                               <>
+                                <label
+                                  className={"pp-photo" + (editPhoto ? " staged" : "")}
+                                  title={editPhoto
+                                    ? "Receipt photo attached — it files with this line's invoice on Save"
+                                    : "Attach a receipt photo (files with Save)"}
+                                >
+                                  <input type="file" accept="image/*"
+                                    onChange={(e) => stageEditPhoto(e.target.files?.[0] ?? null)} />
+                                  {editPhotoUrl ? <img src={editPhotoUrl} alt="" /> : <IconReceipt size={16} />}
+                                </label>
                                 <button className="icon primary" title="Save (Enter)"
-                                  onClick={() => commitEdit.mutate({ id: r.id, d: editDraft })}><IconCheck size={15} /></button>
-                                <button className="icon" title="Cancel (Esc)" onClick={() => setEditId(null)}><IconX size={14} /></button>
+                                  onClick={() => commitEdit.mutate({ id: r.id, d: editDraft, photo: editPhoto })}><IconCheck size={15} /></button>
+                                <button className="icon" title="Cancel (Esc)"
+                                  onClick={() => { stageEditPhoto(null); setEditId(null); }}><IconX size={14} /></button>
                               </>
                             ) : (
                               <>

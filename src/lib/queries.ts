@@ -492,6 +492,43 @@ export async function uploadReceipt(args: {
   return { replaced: Boolean(existing) };
 }
 
+/**
+ * Re-file an existing photo to a corrected invoice block — the SI# typed at
+ * upload was mistyped ("SI# 292173" vs the ledger's "SI# 292713"), or the
+ * date/supplier picked was wrong. The stored photo stays put; only the row's
+ * keys move. Needs the "receipts: staff update" policy (migration 006).
+ */
+export async function refileReceipt(
+  rcpt: Receipt,
+  keys: { purchaseDate: string; siNo: string; supplierId: number | null },
+): Promise<void> {
+  const { data, error } = await supabase.from("receipts").update({
+    purchase_date: keys.purchaseDate,
+    si_no: keys.siNo,
+    supplier_id: keys.supplierId,
+  }).eq("id", rcpt.id).select("id");
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("That invoice block already has its own photo — view it from the ledger.");
+    }
+    throw receiptSetupError(error);
+  }
+  // PostgREST reports an RLS-blocked update as success with zero rows — say
+  // which migration fixes it instead of letting the click do nothing.
+  if (!data?.length) {
+    throw new Error(
+      "The photo couldn't be re-filed — run supabase/migration_006_receipts_update.sql "
+      + "in the Supabase SQL Editor, then try again.",
+    );
+  }
+  await logActivity("update", "receipts", rcpt.id,
+    receiptLabel(keys.siNo, keys.purchaseDate, rcpt.file_name)
+      + ` — re-filed from ${rcpt.si_no || "no invoice #"} · ${rcpt.purchase_date}`,
+    { storage_path: rcpt.storage_path,
+      from: { purchase_date: rcpt.purchase_date, si_no: rcpt.si_no, supplier_id: rcpt.supplier_id },
+      to: { purchase_date: keys.purchaseDate, si_no: keys.siNo, supplier_id: keys.supplierId } });
+}
+
 /** Delete a filed receipt: the row first, then the stored photo (best-effort —
  *  a leftover object is harmless, a row pointing at nothing is not). */
 export async function deleteReceipt(rcpt: Receipt) {

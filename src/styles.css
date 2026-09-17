@@ -924,6 +924,7 @@ label.field .si-box { margin-top: 5px; }
   background: var(--chip-bg); border-left: 2px solid var(--warn, #c9a227);
 }
 .si-pop .sp-hint b { color: var(--ink); font-weight: 600; }
+.si-pop .sp-hint.err { border-left-color: var(--danger); }
 .si-pop .mi {
   display: flex; align-items: center; gap: 8px; width: 100%;
   background: var(--chip-bg); border: 1px solid var(--line-strong);
