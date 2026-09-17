@@ -24,6 +24,9 @@ const TABLE_LABEL: Record<string, string> = {
   purchases: "Purchase",
   suppliers: "Supplier",
   materials: "Particular",
+  receipts: "Receipt",
+  categories: "Category",
+  projects: "Project",
 };
 
 const ACTION_LABEL: Record<ActivityEntry["action"], string> = {
@@ -128,7 +131,9 @@ export default function HistoryPage() {
                   </div>
                 </div>
                 <span className="hist-when">{relTime(e.acted_at)}</span>
-                {canRestore && e.action === "delete" && (
+                {/* restore re-inserts the exact old row — only purchase lines
+                    are restorable; the rest are logged for the record */}
+                {canRestore && e.action === "delete" && e.table_name === "purchases" && (
                   <button
                     className="hist-restore"
                     disabled={restore.isPending}

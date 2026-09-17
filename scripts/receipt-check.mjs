@@ -35,6 +35,9 @@ const flat = [
   flatRow(101, "2026-09-10", "SI# 1001", 1, "MOLDEX PVC TEE 3X3", "PVC Pipes & Fittings"),
   flatRow(102, "2026-09-10", "SI# 1001", 1, "MOLDEX PVC ELBOW 3X90", "PVC Pipes & Fittings"),
   flatRow(103, "2026-09-11", "", 2, "DIESEL (FUEL)", "Fuel & Oil"), // blank SI = same-receipt block
+  // the xlsx ledger keeps leading zeros ("SI# 002144") while the SI box stores
+  // plain digits — matching must pair them through the canonical key
+  flatRow(104, "2026-09-12", "SI# 002144", 1, "MOLDEX PVC PIPE 2IN", "PVC Pipes & Fittings"),
 ];
 function flatRow(id, date, siNo, supplierId, material, category) {
   const sup = suppliers.find((s) => s.id === supplierId);
@@ -367,6 +370,50 @@ ok("photo uploaded into the block's storage path", entryUpload !== undefined,
 await sleep(400);
 ok("staging cleared after the save",
   (await page.locator(".pp-photo.staged").count()) === 0);
+
+// ---- leading zeros: "2144" typed must pair with the ledger's "SI# 002144" ------
+await page.goto(BASE + "/#/receipts", { waitUntil: "domcontentloaded" });
+await page.waitForSelector(".rc-form", { timeout: 10000 });
+await page.locator('.rc-field:has-text("Invoice date") input').fill("2026-09-12");
+await page.locator(".rc-field:has-text('SI#') .si-box input").fill("2144");
+await page.locator('.rc-field:has-text("Supplier") select').selectOption({ label: "HARDWARE A" });
+await page.locator('input[type="file"]').setInputFiles(PHOTO_3);
+n0 = writes.length;
+await page.locator('button:has-text("Add receipt")').click();
+await page.waitForSelector(".banner.ok", { timeout: 15000 });
+let zerosReceipt;
+for (let i = 0; i < 100; i++) {
+  zerosReceipt = writes.slice(n0).find(
+    (w) => w.method === "POST" && w.path.includes("/rest/v1/receipts") && w.body?.si_no === "SI# 2144");
+  if (zerosReceipt) break;
+  await sleep(100);
+}
+ok("receipt stored canonically as typed (SI# 2144)", zerosReceipt !== undefined,
+  JSON.stringify(writes.slice(n0).find((w) => w.path.includes("/rest/v1/receipts"))?.body?.si_no ?? ""));
+
+await page.goto(BASE + "/#/", { waitUntil: "domcontentloaded" });
+await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
+await page.locator('.pp-table tbody tr:has-text("SI# 002144") .si-link').first().click();
+await page.waitForSelector(".si-pop", { timeout: 5000 });
+ok("typed 2144 matches the ledger's SI# 002144 (leading zeros ignored)",
+  (await page.locator('.si-pop button:has-text("View Receipt")').count()) === 1,
+  await page.locator(".si-pop").textContent().catch(() => ""));
+
+// ---- history: receipt adds and deletes land in the activity log -----------------
+let actIns, actDel;
+for (let i = 0; i < 80 && !(actIns && actDel); i++) {
+  const acts = writes.filter((w) => w.path.includes("/rest/v1/activity_log"));
+  actIns = acts.find((w) => w.body?.action === "insert" && w.body?.table_name === "receipts");
+  actDel = acts.find((w) => w.body?.action === "delete" && w.body?.table_name === "receipts");
+  if (!(actIns && actDel)) await sleep(100);
+}
+ok("history logs every receipt add (who + which block)",
+  actIns !== undefined && typeof actIns.body?.summary === "string" &&
+  actIns.body.summary.startsWith("Receipt photo —") && typeof actIns.body?.actor === "string",
+  JSON.stringify(actIns?.body ?? {}));
+ok("history logs the receipt delete from earlier",
+  actDel !== undefined && actDel.body?.summary.includes("Receipt photo —"),
+  JSON.stringify(actDel?.body ?? {}));
 
 console.log(results.join("\n"));
 await browser.close();

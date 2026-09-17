@@ -63,7 +63,9 @@ export async function addCategory(name: string, unit = "pc"): Promise<Category> 
     .insert({ name: clean, unit, sort: (last?.sort ?? 0) + 1 })
     .select("*").single();
   if (error) throw error;
-  return data as Category;
+  const created = data as Category;
+  await logActivity("insert", "categories", created.id ?? null, `Category — ${clean} (${unit})`);
+  return created;
 }
 
 export async function searchMaterials(q: string, categoryId?: number | null): Promise<SearchHit[]> {
@@ -165,7 +167,9 @@ export async function addProject(name: string): Promise<Project> {
   const { data, error } = await supabase
     .from("projects").insert({ name: clean }).select("*").single();
   if (error) throw error;
-  return data as Project;
+  const created = data as Project;
+  await logActivity("insert", "projects", created.id ?? null, `Project — ${clean}`);
+  return created;
 }
 
 /** Best-effort cataloging used by the Purchases save: a typed project name
@@ -174,13 +178,19 @@ export async function addProject(name: string): Promise<Project> {
 export async function ensureProject(name: string): Promise<void> {
   const clean = name.trim().replace(/\s+/g, " ");
   if (!clean) return;
-  const { error } = await supabase.from("projects").insert({ name: clean });
+  const { data, error } = await supabase
+    .from("projects").insert({ name: clean }).select("id").maybeSingle();
   if (error && error.code !== "23505") throw error; // 23505 = already catalogued
+  if (data?.id) {
+    await logActivity("insert", "projects", data.id, `Project — ${clean} (from the ledger)`);
+  }
 }
 
-export async function deleteProject(id: number) {
+export async function deleteProject(id: number, name = "") {
   const { error } = await supabase.from("projects").delete().eq("id", id);
   if (error) throw error;
+  await logActivity("delete", "projects", id,
+    `Project — ${name || `#${id}`} (its ledger lines keep the name)`);
 }
 
 /** Rename a catalogued project (name_norm regenerates server-side). */
@@ -188,6 +198,7 @@ export async function updateProjectName(id: number, name: string) {
   const clean = name.trim().replace(/\s+/g, " ");
   const { error } = await supabase.from("projects").update({ name: clean }).eq("id", id);
   if (error) throw error;
+  await logActivity("update", "projects", id, `Project renamed — ${clean}`);
 }
 
 /** Project names live on purchase lines as free text, so a rename also
@@ -203,11 +214,14 @@ export async function renameProjectLines(oldName: string, newName: string) {
 export async function updateCategory(id: number, patch: { name?: string; unit?: string }) {
   const { error } = await supabase.from("categories").update(patch).eq("id", id);
   if (error) throw error;
+  await logActivity("update", "categories", id,
+    `Category edited — ${patch.name ?? `#${id}`}${patch.unit ? ` (${patch.unit})` : ""}`, patch);
 }
 
-export async function deleteCategory(id: number) {
-  const { error } = await supabase.from("categories").delete().eq("id", id);
+export async function deleteCategory(cat: Category) {
+  const { error } = await supabase.from("categories").delete().eq("id", cat.id);
   if (error) throw error;
+  await logActivity("delete", "categories", cat.id, `Category — ${cat.name}`);
 }
 
 export async function updateSupplierName(id: number, name: string) {
@@ -323,13 +337,22 @@ export async function fetchReceipts(): Promise<Receipt[]> {
   return data as Receipt[];
 }
 
+/** Canonical SI# key for matching: "SI# 002144", "SI 2144" and "002144" all
+ *  collapse to "2144". The imported ledger keeps the xlsx's leading zeros and
+ *  the SI box stores plain digits, so an exact-text compare would never pair
+ *  a receipt with its line. Blank / no digits → "" (the no-number blocks). */
+export function siKey(si: string | null | undefined): string {
+  const digits = (si ?? "").replace(/\D/g, "");
+  return digits.replace(/^0+(?=\d)/, ""); // trim leading zeros, keep one digit
+}
+
 /** The receipt photo filed for an invoice block (date + SI# + supplier). */
 export function receiptForBlock(
   receipts: Receipt[], purchaseDate: string, siNo: string, supplierId: number | null,
 ): Receipt | undefined {
   return receipts.find(
     (r) => r.purchase_date === purchaseDate
-      && r.si_no === siNo
+      && siKey(r.si_no) === siKey(siNo)
       && (r.supplier_id ?? null) === (supplierId ?? null),
   );
 }
@@ -351,12 +374,38 @@ function receiptSetupError(e: { code?: string; message?: string }): Error {
 async function findReceiptRow(
   purchaseDate: string, siNo: string, supplierId: number | null,
 ): Promise<Receipt | null> {
-  let q = supabase.from("receipts").select("*")
-    .eq("purchase_date", purchaseDate).eq("si_no", siNo);
+  // fetch the block's receipts and match on the canonical SI# key — the row's
+  // stored form ("SI# 002144" from the xlsx) may differ from the typed one
+  let q = supabase.from("receipts").select("*").eq("purchase_date", purchaseDate);
   q = supplierId == null ? q.is("supplier_id", null) : q.eq("supplier_id", supplierId);
-  const { data, error } = await q.maybeSingle();
+  const { data, error } = await q.limit(20);
   if (error) throw receiptSetupError(error);
-  return (data as Receipt) ?? null;
+  return (data as Receipt[]).find((r) => siKey(r.si_no) === siKey(siNo)) ?? null;
+}
+
+/**
+ * Best-effort history write for tables without audit triggers (receipts,
+ * categories, projects — purchases/suppliers/materials are logged by the DB).
+ * History is furniture: it must never block the action it describes.
+ */
+export async function logActivity(
+  action: "insert" | "update" | "delete",
+  tableName: string, rowId: number | null,
+  summary: string, details?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const { data: me } = await supabase.auth.getUser();
+    await supabase.from("activity_log").insert({
+      action, table_name: tableName, row_id: rowId,
+      actor: me.user?.email ?? "", summary,
+      details: details ?? null,
+    });
+  } catch { /* ignore — the action itself already succeeded */ }
+}
+
+/** Block label used across receipt banners and history entries. */
+function receiptLabel(siNo: string, purchaseDate: string, fileName: string): string {
+  return `Receipt photo — ${siNo || "no invoice #"} · ${purchaseDate} (${fileName})`;
 }
 
 /**
@@ -395,10 +444,14 @@ export async function uploadReceipt(args: {
       throw delErr;
     }
     await supabase.storage.from("receipts").remove([existing.storage_path]);
+    await logActivity("delete", "receipts", existing.id,
+      receiptLabel(existing.si_no, existing.purchase_date, existing.file_name)
+        + " — replaced by a new photo",
+      { storage_path: existing.storage_path, replaced_by: path });
   }
 
   const { data: me } = await supabase.auth.getUser();
-  const { error: insErr } = await supabase.from("receipts").insert({
+  const { data: insRow, error: insErr } = await supabase.from("receipts").insert({
     purchase_date: purchaseDate,
     si_no: siNo,
     supplier_id: supplierId,
@@ -407,20 +460,26 @@ export async function uploadReceipt(args: {
     mime_type: "image/jpeg",
     file_size: blob.size,
     uploaded_by: me.user?.id ?? null,
-  });
+  }).select("id").maybeSingle();
   if (insErr) {
     await supabase.storage.from("receipts").remove([path]); // no orphan photo
     throw receiptSetupError(insErr);
   }
+  await logActivity("insert", "receipts", insRow?.id ?? null,
+    receiptLabel(siNo, purchaseDate, file instanceof File ? file.name : "photo"),
+    { storage_path: path, file_size: blob.size, replaced: Boolean(existing) });
   return { replaced: Boolean(existing) };
 }
 
 /** Delete a filed receipt: the row first, then the stored photo (best-effort —
  *  a leftover object is harmless, a row pointing at nothing is not). */
-export async function deleteReceipt(id: number, storagePath: string) {
-  const { error } = await supabase.from("receipts").delete().eq("id", id);
+export async function deleteReceipt(rcpt: Receipt) {
+  const { error } = await supabase.from("receipts").delete().eq("id", rcpt.id);
   if (error) throw error;
-  await supabase.storage.from("receipts").remove([storagePath]).catch(() => { /* orphan ok */ });
+  await supabase.storage.from("receipts").remove([rcpt.storage_path]).catch(() => { /* orphan ok */ });
+  await logActivity("delete", "receipts", rcpt.id,
+    receiptLabel(rcpt.si_no, rcpt.purchase_date, rcpt.file_name),
+    { storage_path: rcpt.storage_path });
 }
 
 /** Short-lived view URL for one photo (the bucket is private). */

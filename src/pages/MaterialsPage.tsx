@@ -18,7 +18,7 @@ import { guessCategory } from "../lib/guess";
 import {
   IconBox, IconCheck, IconPencil, IconPlus, IconSearch, IconTag, IconTrash, IconTruck, IconX,
 } from "../components/icons";
-import type { Material } from "../lib/types";
+import type { Category, Material } from "../lib/types";
 
 /** Short human text for the database errors the edit/delete actions hit. */
 function friendly(e: unknown): string {
@@ -143,7 +143,7 @@ export default function MaterialsPage() {
   });
 
   const delProj = useMutation({
-    mutationFn: (id: number) => deleteProject(id),
+    mutationFn: (p: { id: number; name: string }) => deleteProject(p.id, p.name),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
     onError: (e: Error) => setProjMsg({ kind: "err", text: e.message }),
   });
@@ -179,7 +179,7 @@ export default function MaterialsPage() {
   });
 
   const delCatM = useMutation({
-    mutationFn: (id: number) => deleteCategory(id),
+    mutationFn: (c: Category) => deleteCategory(c),
     onSuccess: () => {
       setCatMsg({ kind: "ok", text: "Category removed." });
       qc.invalidateQueries({ queryKey: ["categories"] });
@@ -497,7 +497,7 @@ export default function MaterialsPage() {
                             <button className="iconbtn" title="Remove from the project list"
                               onClick={() => {
                                 if (confirm(`Remove “${p.name}” from the project list? Existing purchase lines keep their project name.`)) {
-                                  delProj.mutate(p.id!); // guarded by p.id !== null above
+                                  delProj.mutate({ id: p.id!, name: p.name }); // p.id guarded non-null above
                                 }
                               }}>
                               <IconTrash size={15} />
@@ -597,7 +597,7 @@ export default function MaterialsPage() {
                         <button className="iconbtn" title="Remove category"
                           onClick={() => {
                             if (confirm(`Remove the category “${c.name}”? A category with particulars in it cannot be removed.`)) {
-                              delCatM.mutate(c.id);
+                              delCatM.mutate(c);
                             }
                           }}>
                           <IconTrash size={15} />

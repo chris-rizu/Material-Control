@@ -98,7 +98,7 @@ export default function ReceiptsPage() {
   });
 
   const delM = useMutation({
-    mutationFn: (r: Receipt) => deleteReceipt(r.id, r.storage_path),
+    mutationFn: (r: Receipt) => deleteReceipt(r),
     onSuccess: () => {
       setMsg({ kind: "ok", text: "Receipt photo deleted. The purchase lines are untouched." });
       qc.invalidateQueries({ queryKey: ["receipts"] });

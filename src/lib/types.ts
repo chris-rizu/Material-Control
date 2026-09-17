@@ -147,7 +147,7 @@ export interface ActivityEntry {
   acted_at: string;
   actor: string;
   action: "insert" | "update" | "delete" | "restore";
-  table_name: "purchases" | "suppliers" | "materials";
+  table_name: "purchases" | "suppliers" | "materials" | "receipts" | "categories" | "projects";
   row_id: number | null;
   summary: string;
   details: Record<string, unknown> | { old: Record<string, unknown>; new: Record<string, unknown> } | null;
