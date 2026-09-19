@@ -60,7 +60,9 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [session]);
+    // sessionLoaded too: on a device with no stored sign-in the session stays
+    // null -> null, so [session] alone never re-ran and "Loading…" hung forever
+  }, [session, sessionLoaded]);
 
   if (!isConfigured) return <SetupPage />;
   if (!ready) return <div className="page-loading">Loading…</div>;
