@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
 import {
-  addCategory, ensureMaterial, ensureSupplier, fetchCategories, fetchImportBatches,
+  addCategory, ensureMaterial, ensureProject, ensureSupplier, fetchCategories, fetchImportBatches,
   fetchPurchasesFlat, findImportBatch, matchMaterial, recordImportBatch,
 } from "../lib/queries";
 import { parseParticulars } from "../lib/parse";
@@ -100,6 +100,15 @@ export default function ImportPage() {
         supplierFor.set(s, (await ensureSupplier(s)).id);
       }
 
+      // 2b) Projects — the app's export carries per-line project names, so a
+      // round-trip re-import restores the catalog too (best-effort, optional).
+      const distinctProjects = [
+        ...new Set(parsed.blocks.flatMap((b) => b.lines.map((l) => l.project)).filter(Boolean)),
+      ];
+      for (const p of distinctProjects) {
+        try { await ensureProject(p); } catch { /* catalog is optional */ }
+      }
+
       // 3) Build purchase rows.
       const rows: Record<string, unknown>[] = [];
       for (const block of parsed.blocks) {
@@ -120,6 +129,7 @@ export default function ImportPage() {
             category_id: catFor.get(l.particulars) ?? null,
             material_id: materialFor.get(l.particulars) ?? null,
             particulars_raw: l.particulars,
+            project_name: l.project,
             attributes: {},
             unit_price: l.unitPrice,
             quantity: l.quantity,
@@ -164,6 +174,7 @@ export default function ImportPage() {
           si_no: r.si_no,
           supplier: r.supplier,
           particulars_raw: r.particulars_raw,
+          project_name: r.project_name,
           unit_price: Number(r.unit_price),
           quantity: Number(r.quantity),
           amount: Number(r.amount),

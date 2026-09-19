@@ -980,6 +980,8 @@ label.field .si-box { margin-top: 5px; }
 .rc-table th { color: var(--muted); font-size: 12px; font-weight: 600; background: var(--thead-bg); }
 .rc-table tbody tr:hover { background: var(--hover); }
 .rc-table .actions { white-space: nowrap; text-align: right; }
+/* in-row re-filing editors (Edit a filed receipt's date / SI# / supplier) */
+.rc-table td input, .rc-table td select { width: 100%; min-width: 0; font-size: 13px; }
 .rc-thumb-sm {
   width: 46px; height: 46px; object-fit: cover; object-position: top;
   border: 1px solid var(--line-strong); background: #fff; cursor: zoom-in;

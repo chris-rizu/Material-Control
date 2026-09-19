@@ -130,8 +130,20 @@ async function routeSupabase(route) {
       return route.fulfill({ status: 204 });
     }
     if (method === "PATCH") {
-      // refileReceipt: update().eq(id).select("id") — apply and echo the id
-      const row = receipts.find((r) => r.id === Number(eqParam("id")));
+      // refileReceipt: update().eq(id).select("id") — apply and echo the id.
+      // The real table has a unique constraint per invoice block: filing onto
+      // a block that already has its own photo is a 23505.
+      const rid = Number(eqParam("id"));
+      const row = receipts.find((r) => r.id === rid);
+      const keyOf = (r) => `${r.purchase_date}|${String(r.si_no ?? "").replace(/\D/g, "")}|${r.supplier_id ?? ""}`;
+      const next = { ...row, ...body() };
+      const clash = receipts.find((r) => r.id !== rid && keyOf(r) === keyOf(next));
+      if (clash) {
+        return route.fulfill(json(
+          { code: "23505", message: "duplicate key value violates unique constraint receipt_block_key" },
+          409,
+        ));
+      }
       if (row) Object.assign(row, body());
       return route.fulfill(json(row ? [{ id: row.id }] : []));
     }
@@ -346,6 +358,12 @@ ok("delete removes the receipt row and its stored photo",
 await sleep(500);
 ok("list drops to one receipt",
   (await page.locator(".rc-table tbody tr").count()) === 1);
+// the report behind the row re-file feature: after deleting, the upload
+// form's SI# box must still take typing (nothing locks the form)
+await page.locator(".rc-field:has-text('SI#') .si-box input").fill("9999");
+ok("after a delete the upload form's SI# box still edits",
+  (await page.locator(".rc-field:has-text('SI#') .si-box input").inputValue()) === "9999");
+await page.locator(".rc-field:has-text('SI#') .si-box input").fill("");
 
 await page.goto(BASE + "/#/", { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".pp-table tbody tr", { timeout: 10000 });
@@ -502,6 +520,56 @@ ok("history logs the refile with from → to",
   actUpd !== undefined && actUpd.body?.summary.includes("re-filed from") &&
   actUpd.body?.details?.from?.si_no === "" && actUpd.body?.details?.to?.si_no === "SI# 7777",
   JSON.stringify(actUpd?.body ?? {}));
+
+// ---- receipts tab: Edit fixes a filed photo's SI# in place (no re-upload) ---
+await page.goto(BASE + "/#/receipts", { waitUntil: "domcontentloaded" });
+await page.waitForSelector(".rc-table tbody tr", { timeout: 10000 });
+// pin rows by the thumbnail's alt (a row in edit mode shows its SI# as an
+// input VALUE, which :has-text can't see)
+const row2144 = page.locator('.rc-table tbody tr:has(img[alt="Receipt SI# 2144"])');
+ok("every filed receipt row offers Edit",
+  (await row2144.locator('button[title="Edit receipt filing"]').count()) === 1);
+await row2144.locator('button[title="Edit receipt filing"]').click();
+const rowSi = row2144.locator(".si-box input");
+ok("the editors open with the receipt's current filing",
+  (await row2144.locator('input[type="date"]').inputValue()) === "2026-09-12" &&
+  (await rowSi.inputValue()) === "2144" &&
+  (await row2144.locator("select").inputValue()) === "1");
+await rowSi.fill("2145");
+const n2 = writes.length;
+await row2144.locator('button[title="Save re-filing"]').click();
+let rowPatch;
+for (let i = 0; i < 50 && !rowPatch; i++) {
+  rowPatch = writes.slice(n2).find(
+    (w) => w.method === "PATCH" && w.path.includes("/rest/v1/receipts") && w.body?.si_no === "SI# 2145");
+  if (!rowPatch) await sleep(100);
+}
+ok("row Save re-files in place (PATCH with the corrected keys)",
+  rowPatch !== undefined && rowPatch.body?.purchase_date === "2026-09-12" &&
+  rowPatch.body?.supplier_id === 1,
+  JSON.stringify(rowPatch ?? {}));
+await sleep(500);
+ok("the row shows the corrected SI# after saving",
+  (await page.locator('.rc-table tbody tr:has(img[alt="Receipt SI# 2145"])').count()) === 1 &&
+  (await page.locator(".banner.ok").textContent())?.includes("Receipt re-filed under 2026-09-12 · SI# 2145") === true,
+  await page.locator(".banner.ok").textContent().catch(() => ""));
+
+// filing onto a block that already has its own photo explains itself
+const row2145 = page.locator('.rc-table tbody tr:has(img[alt="Receipt SI# 2145"])');
+await row2145.locator('button[title="Edit receipt filing"]').click();
+await row2145.locator('input[type="date"]').fill("2026-09-11");
+await row2145.locator("select").selectOption({ label: "CEMENT CO" });
+await row2145.locator(".si-box input").fill("7777");
+await row2145.locator('button[title="Save re-filing"]').click();
+await page.waitForSelector(".banner.err", { timeout: 10000 });
+ok("moving onto an occupied invoice block explains itself",
+  (await page.locator(".banner.err").textContent())?.includes("already has its own photo") === true,
+  await page.locator(".banner.err").textContent().catch(() => ""));
+await row2145.locator('button[title="Cancel re-filing"]').click();
+await sleep(300);
+ok("cancel keeps the receipt exactly as it was",
+  (await page.locator('.rc-table tbody tr:has(img[alt="Receipt SI# 2145"])').count()) === 1 &&
+  (await page.locator(".rc-table .si-box").count()) === 0);
 
 console.log(results.join("\n"));
 await browser.close();

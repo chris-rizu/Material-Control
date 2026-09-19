@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
-import { deleteReceipt, fetchReceipts, fetchSuppliers, uploadReceipt } from "../lib/queries";
+import { deleteReceipt, fetchReceipts, fetchSuppliers, refileReceipt, uploadReceipt } from "../lib/queries";
 import { loadReceiptPhoto, peekReceiptPhoto, preloadReceiptPhotos } from "../lib/receiptPhotos";
 import { siDigits, toSiNo, todayISO } from "../lib/format";
 import SiInput from "../components/SiInput";
@@ -115,6 +115,49 @@ export default function ReceiptsPage() {
     onError: (e: Error) => setMsg({ kind: "err", text: e.message }),
   });
 
+  // ---- row re-filing: correct a filed photo's date / SI# / supplier in place
+  // (a mistyped SI# never needs delete + re-upload) --------------------------
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editDate, setEditDate] = useState("");
+  const [editSi, setEditSi] = useState("");
+  const [editSup, setEditSup] = useState<number | "">("");
+
+  function startEdit(r: Receipt) {
+    setMsg(null);
+    setEditId(r.id);
+    setEditDate(r.purchase_date);
+    setEditSi(siDigits(r.si_no)); // the box shows digits; the save re-wraps "SI# …"
+    setEditSup(r.supplier_id ?? "");
+  }
+
+  function cancelEdit() {
+    setEditId(null);
+  }
+
+  const refileM = useMutation({
+    mutationFn: (r: Receipt) => {
+      if (!editDate) return Promise.reject(new Error("Pick the invoice date first."));
+      if (editSup === "") {
+        return Promise.reject(
+          new Error("Pick the supplier — the photo is filed under date + SI# + supplier."),
+        );
+      }
+      return refileReceipt(r, {
+        purchaseDate: editDate, siNo: toSiNo(editSi), supplierId: Number(editSup),
+      });
+    },
+    onSuccess: () => {
+      setEditId(null);
+      setMsg({
+        kind: "ok",
+        text: `Receipt re-filed under ${editDate}${toSiNo(editSi) ? ` · ${toSiNo(editSi)}` : ""}`
+          + " — it now opens from the ledger by that SI#.",
+      });
+      qc.invalidateQueries({ queryKey: ["receipts"] });
+    },
+    onError: (e: Error) => setMsg({ kind: "err", text: e.message }),
+  });
+
   return (
     <>
       <div className="page-head">
@@ -122,7 +165,7 @@ export default function ReceiptsPage() {
           <div className="page-icon"><IconReceipt size={22} /></div>
           <div>
             <h1>Receipts</h1>
-            <div className="page-sub">Photos of your sales invoices — add one per receipt, then open it from the ledger by clicking the SI#.</div>
+            <div className="page-sub">Photos of your sales invoices — add one per receipt, then open it from the ledger by clicking the SI#. A wrong date, SI# or supplier is fixed with Edit — no need to delete and re-upload.</div>
           </div>
         </div>
       </div>
@@ -205,29 +248,59 @@ export default function ReceiptsPage() {
               </thead>
               <tbody>
                 {receipts.map((r) => {
+                  const editing = editId === r.id;
                   return (
                     <tr key={r.id}>
                       <td>
                         <ReceiptThumb r={r} onOpen={() => setViewing(r)} />
                       </td>
-                      <td>{r.purchase_date}</td>
-                      <td>{r.si_no || <span className="muted">—</span>}</td>
-                      <td title={r.supplier_id != null ? supName.get(r.supplier_id) : ""}>
-                        {r.supplier_id != null ? supName.get(r.supplier_id) ?? "—" : <span className="muted">—</span>}
+                      <td>{editing
+                        ? <input type="date" value={editDate}
+                            onChange={(e) => setEditDate(e.target.value)} />
+                        : r.purchase_date}</td>
+                      <td>{editing
+                        ? <SiInput value={editSi} onChange={setEditSi} />
+                        : (r.si_no || <span className="muted">—</span>)}</td>
+                      <td title={editing || r.supplier_id == null ? undefined : supName.get(r.supplier_id)}>
+                        {editing
+                          ? <select value={String(editSup)}
+                              onChange={(e) => setEditSup(e.target.value === "" ? "" : Number(e.target.value))}>
+                              <option value="">Pick supplier…</option>
+                              {(supsQ.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          : r.supplier_id != null ? supName.get(r.supplier_id) ?? "—"
+                            : <span className="muted">—</span>}
                       </td>
                       <td className="muted">{fileSizeText(Number(r.file_size))}</td>
                       <td className="muted">{new Date(r.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</td>
                       <td className="actions">
-                        <button className="iconbtn" title="View receipt" onClick={() => setViewing(r)}>View</button>
-                        {canWrite && (
-                          <button className="iconbtn" title="Delete receipt photo"
-                            onClick={() => {
-                              if (confirm(`Delete this receipt photo?\n\n${r.purchase_date} · ${r.si_no || "no SI#"}\n\nThe purchase lines stay — only the photo is removed.`)) {
-                                delM.mutate(r);
-                              }
-                            }}>
-                            <IconTrash size={15} />
-                          </button>
+                        {editing ? (
+                          <>
+                            <button className="iconbtn" title="Save re-filing" disabled={refileM.isPending}
+                              onClick={() => refileM.mutate(r)}>
+                              {refileM.isPending ? <span className="spinner" /> : "Save"}
+                            </button>
+                            <button className="iconbtn" title="Cancel re-filing"
+                              onClick={cancelEdit}>Cancel</button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="iconbtn" title="View receipt" onClick={() => setViewing(r)}>View</button>
+                            {canWrite && (
+                              <>
+                                <button className="iconbtn" title="Edit receipt filing"
+                                  onClick={() => startEdit(r)}>Edit</button>
+                                <button className="iconbtn" title="Delete receipt photo"
+                                  onClick={() => {
+                                    if (confirm(`Delete this receipt photo?\n\n${r.purchase_date} · ${r.si_no || "no SI#"}\n\nThe purchase lines stay — only the photo is removed.\n(Just a wrong SI#, date or supplier? Use Edit instead.)`)) {
+                                      delM.mutate(r);
+                                    }
+                                  }}>
+                                  <IconTrash size={15} />
+                                </button>
+                              </>
+                            )}
+                          </>
                         )}
                       </td>
                     </tr>

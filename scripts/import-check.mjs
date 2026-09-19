@@ -46,6 +46,22 @@ async function buildLegacyWorkbook() {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
+// round-trip workbook: the layout the app's own Export writes — PROJECT in
+// column E, UNIT PRICE/QUANTITY/AMOUNT shifted to F/G/H, no subtotal column
+async function buildRoundTripWorkbook() {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Sheet1");
+  ws.getCell("A1").value = "PURCHASES";
+  ["DATE", "INVOICE/RECEIPT", "SUPPLIER'S NAME", "PARTICULARS", "PROJECT",
+   "UNIT PRICE", "QUANTITY", "AMOUNT"].forEach((h, i) => { ws.getCell(3, i + 1).value = h; });
+  const put = (r, c, v) => { if (v !== null && v !== undefined) ws.getCell(r, c).value = v; };
+  put(4, 1, new Date(2026, 8, 5)); put(4, 2, "SI# 4001"); put(4, 3, "ABC HARDWARE");
+  put(4, 4, "CEMENT RIVIERA"); put(4, 5, "SITE A"); put(4, 6, 250); put(4, 7, 2); put(4, 8, 500);
+  put(5, 4, "PVC ELBOW 3X90"); put(5, 5, "SITE B"); put(5, 6, 350); put(5, 7, 1); put(5, 8, 350);
+  put(6, 4, "PVC PIPE 4"); put(6, 6, 240); put(6, 7, 1); put(6, 8, 240); // blank project = same as above
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
 const json = (body, status = 200) => ({
   status, contentType: "application/json",
   headers: { "access-control-allow-origin": "*" },
@@ -67,7 +83,10 @@ async function routeSupabase(route) {
                                 email: "owner@roro.ph", aud: "authenticated", role: "authenticated" }));
   if (url.includes("/rest/v1/rpc/search_materials")) return route.fulfill(json([]));
   if (url.includes("/rest/v1/profiles")) return route.fulfill(json([{ role: "owner" }]));
-  if (url.includes("/rest/v1/projects")) return route.fulfill(json([]));
+  if (url.includes("/rest/v1/projects")) {
+    if (method === "POST") return route.fulfill(json({ id: 900, ...body() }), 201);
+    return route.fulfill(json([]));
+  }
   if (url.includes("/rest/v1/purchases_flat")) return route.fulfill(json([]));
   if (url.includes("/rest/v1/purchases")) return route.fulfill(json([], 201));
 
@@ -278,6 +297,35 @@ ok("same file again → duplicate warning",
    (await page.locator(".banner.warn").textContent())?.includes("already imported") === true);
 ok("Import disabled until 'Import anyway' is ticked",
    await page.locator('button:has-text("Import 6 lines into the database")').isDisabled());
+
+// ---- round trip: the app's own 8-column export re-imports losslessly ---------
+await page.setInputFiles('input[type="file"]', {
+  name: "PURCHASES_export_2026-09-19.xlsx",
+  mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  buffer: await buildRoundTripWorkbook(),
+});
+await page.waitForSelector(".imp-stats", { timeout: 10000 });
+const stats8 = (await page.locator(".imp-stat .v").allTextContents()).map((x) => x.trim());
+ok("8-column export: 3 lines / 1 block parsed",
+   stats8[0] === "3" && stats8[1] === "1", JSON.stringify(stats8));
+ok("8-column export: AMOUNT in H is NOT misread as a subtotal (no repairs)",
+   (await page.locator(".chip").count()) === 0 &&
+   stats8[2]?.includes("1,090.00") && stats8[3]?.includes("1,090.00"), JSON.stringify(stats8));
+
+const w8 = writes.length;
+await page.locator('button:has-text("Import 3 lines into the database")').click();
+await page.waitForSelector(".banner.ok", { timeout: 20000 });
+const rows8 = writes.slice(w8).filter((w) => w.path.includes("/rest/v1/purchases"))
+  .map((w) => w.body).flat();
+ok("round trip keeps the PROJECT on every line (forward-filled where blank)",
+   rows8.length === 3 &&
+   rows8[0]?.project_name === "SITE A" && rows8[1]?.project_name === "SITE B" &&
+   rows8[2]?.project_name === "SITE B" &&
+   rows8[2]?.amount === 240,
+   JSON.stringify(rows8.map((x) => [x.project_name, x.amount])));
+ok("round trip re-creates the project catalog entries",
+   writes.slice(w8).filter((w) => w.path.includes("/rest/v1/projects"))
+     .map((w) => w.body?.name).sort().join("|") === "SITE A|SITE B");
 
 console.log(results.join("\n"));
 await browser.close();

@@ -510,6 +510,7 @@ export default function PurchasePage() {
           si_no: r.si_no,
           supplier: r.supplier,
           particulars_raw: r.particulars_raw,
+          project_name: r.project_name,
           unit_price: Number(r.unit_price),
           quantity: Number(r.quantity),
           amount: Number(r.amount),

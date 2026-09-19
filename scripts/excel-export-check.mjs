@@ -121,10 +121,10 @@ ok("workbook contains a table named Purchases", tbl?.name === "Purchases",
 ok("table style is TableStyleMedium9 (Blue, Medium 9)",
   tbl?.style?.theme === "TableStyleMedium9", JSON.stringify(tbl?.style));
 ok("row stripes on (banded blue rows)", tbl?.style?.showRowStripes === true);
-ok("table spans A3:G7", tbl?.tableRef === "A3:G7", tbl?.tableRef);
+ok("table spans A3:H7", tbl?.tableRef === "A3:H7", tbl?.tableRef);
 
-// headers: row 3, capitalized + bold Calibri 11 white (the style's blue shows)
-const HEADERS = ["DATE", "INVOICE/RECEIPT", "SUPPLIER'S NAME", "PARTICULARS",
+// headers: row 3, capitalized + bold Arial 11 white (the style's blue shows)
+const HEADERS = ["DATE", "INVOICE/RECEIPT", "SUPPLIER'S NAME", "PARTICULARS", "PROJECT",
                  "UNIT PRICE", "QUANTITY", "AMOUNT"];
 const headerRow = ws.getRow(3);
 const hVals = HEADERS.map((_, i) => headerRow.getCell(i + 1).value);
@@ -156,6 +156,12 @@ const r7 = [local(cell(7, 1).value), cell(7, 2).value, cell(7, 3).value];
 ok("the other receipt shows its own header (blank SI stays blank)",
   r7[0] === "2026-09-09" && r7[1] === "" && r7[2] === "CEMENT CO", JSON.stringify(r7));
 
+// the Project column rides along on every line
+const proj = (r) => String(cell(r, 5).value ?? "");
+ok("every line carries its PROJECT",
+  proj(4) === "MCDO" && proj(5) === "MCDO" && proj(6) === "MCDO" && proj(7) === "Talisay",
+  JSON.stringify([proj(4), proj(5), proj(6), proj(7)]));
+
 // data cells: Arial 11, dates/money formatted per cell
 const dFont = cell(5, 4).font;
 ok("data cells are Arial 11 (not bold)",
@@ -164,25 +170,25 @@ ok("data cells are Arial 11 (not bold)",
 ok("DATE cell is long-date formatted",
   String(cell(4, 1).numFmt ?? "").includes("dddd"), String(cell(4, 1).numFmt));
 ok("AMOUNT cell uses the accounting format",
-  String(cell(4, 7).numFmt ?? "").includes("#,##0.00"), String(cell(4, 7).numFmt));
+  String(cell(4, 8).numFmt ?? "").includes("#,##0.00"), String(cell(4, 8).numFmt));
 
-// numbers land as numbers with the right values
+// numbers land as numbers with the right values (price F, qty G, amount H)
 ok("unit price / qty / amount are numbers",
-  cell(4, 5).value === 374.8 && cell(4, 6).value === 3 && cell(4, 7).value === 1124.4,
-  JSON.stringify([cell(4, 5).value, cell(4, 6).value, cell(4, 7).value]));
+  cell(4, 6).value === 374.8 && cell(4, 7).value === 3 && cell(4, 8).value === 1124.4,
+  JSON.stringify([cell(4, 6).value, cell(4, 7).value, cell(4, 8).value]));
 
 // money/date column formats survive via the column styles
-const c1 = ws.getColumn(1), c5 = ws.getColumn(5);
-ok("column widths kept", Math.abs((c1.width ?? 0) - 32.53) < 0.01 && Math.abs((c5.width ?? 0) - 18.13) < 0.01,
-  JSON.stringify([c1.width, c5.width]));
+const c1 = ws.getColumn(1), c6 = ws.getColumn(6);
+ok("column widths kept", Math.abs((c1.width ?? 0) - 32.53) < 0.01 && Math.abs((c6.width ?? 0) - 18.13) < 0.01,
+  JSON.stringify([c1.width, c6.width]));
 ok("DATE column is long-date formatted",
   typeof c1.numFmt === "string" && c1.numFmt.includes("dddd"), String(c1.numFmt));
 ok("UNIT PRICE / AMOUNT columns use the accounting format",
-  typeof c5.numFmt === "string" && c5.numFmt.includes("#,##0.00"), String(c5.numFmt));
+  typeof c6.numFmt === "string" && c6.numFmt.includes("#,##0.00"), String(c6.numFmt));
 
 // nothing to the right of AMOUNT
 const spill = ws.getRow(4).cellCount;
-ok("nothing to the right of AMOUNT", spill <= 7, `row 4 has ${spill} cells`);
+ok("nothing to the right of AMOUNT", spill <= 8, `row 4 has ${spill} cells`);
 
 console.log(results.join("\n"));
 await browser.close();

@@ -1,18 +1,21 @@
-// Excel I/O: read the legacy PURCHASES workbook into blocks, and write the
-// ledger back out ("can be opened in Excel"): 7 columns, every cell
+// Excel I/O: read PURCHASES workbooks into blocks, and write the ledger back
+// out ("can be opened in Excel"): 8 columns (PROJECT included), every cell
 // center-aligned, Arial 11, dates as long dates, money in the accounting
-// format, every line carrying its own date / SI# / supplier. The data sits in
-// a real Excel table with the blue Table Style Medium 9. Nothing sits to the
-// right of AMOUNT. exceljs is loaded lazily to keep startup fast.
+// format, every line carrying its own date / SI# / supplier / project. The
+// data sits in a real Excel table with the blue Table Style Medium 9. Nothing
+// sits to the right of AMOUNT. exceljs is loaded lazily to keep startup fast.
+// The reader accepts BOTH layouts — the legacy 7-column workbook (optional
+// col-H subtotals) and this app's own 8-column export (PROJECT in E, amount
+// in H) — detected by the header row, so an export round-trips losslessly.
 
 import type ExcelJSNS from "exceljs";
 
 export const ACCOUNTING_FMT = '_-* #,##0.00_-;\\-* #,##0.00_-;_-* "-"??_-;_-@_-';
 export const LONG_DATE_FMT = "[$-F800]dddd\\,\\ mmmm\\ dd\\,\\ yyyy";
 
-export const COL_WIDTHS = [32.53, 16.73, 30.6, 54.27, 18.13, 14.0, 16.33];
+export const COL_WIDTHS = [32.53, 16.73, 30.6, 54.27, 20.0, 18.13, 14.0, 16.33];
 export const HEADERS = [
-  "DATE", "INVOICE/RECEIPT", "SUPPLIER'S NAME", "PARTICULARS",
+  "DATE", "INVOICE/RECEIPT", "SUPPLIER'S NAME", "PARTICULARS", "PROJECT",
   "UNIT PRICE", "QUANTITY", "AMOUNT",
 ];
 export const FONT_NAME = "Arial";
@@ -24,6 +27,7 @@ export interface ImportedLine {
   date: string; // YYYY-MM-DD (forward-filled)
   siNo: string; // forward-filled
   supplier: string; // forward-filled
+  project: string; // forward-filled (8-column layout only; legacy files have none)
   particulars: string;
   unitPrice: number;
   quantity: number;
@@ -109,6 +113,18 @@ export async function readPurchasesFile(file: File): Promise<ParsedLedger> {
   let curDate = "";
   let curSi = "";
   let curSupplier = "";
+  let curProject = "";
+
+  // Column layout, detected from the header row (row 3): the legacy workbook
+  // has price/qty/amount in E/F/G with an optional col-H subtotal; this app's
+  // export adds PROJECT in E and shifts them to F/G/H with nothing after.
+  const headerAt = (c: number) => cellText(ws.getRow(3).getCell(c).value).toUpperCase();
+  const hasProjectCol = headerAt(5) === "PROJECT";
+  const colProject = hasProjectCol ? 5 : 0;
+  const colPrice = hasProjectCol ? 6 : 5;
+  const colQty = hasProjectCol ? 7 : 6;
+  const colAmount = hasProjectCol ? 8 : 7;
+  const colSubtotal = hasProjectCol ? 0 : 8; // 0 = none (nothing right of AMOUNT)
 
   for (let r = 4; r <= ws.rowCount; r++) {
     const row = ws.getRow(r);
@@ -116,13 +132,14 @@ export async function readPurchasesFile(file: File): Promise<ParsedLedger> {
     const cB = row.getCell(2).value;
     const cC = row.getCell(3).value;
     const cD = row.getCell(4).value;
-    const cE = row.getCell(5).value;
-    const cF = row.getCell(6).value;
-    const cG = row.getCell(7).value;
+    const cE = row.getCell(colPrice).value;
+    const cF = row.getCell(colQty).value;
+    const cG = row.getCell(colAmount).value;
 
     const date = isoDate(cA);
     const si = cellText(cB);
     const supplier = cellText(cC);
+    const project = colProject ? cellText(row.getCell(colProject).value) : "";
     const particulars = cellText(cD);
     const price = cellNumber(cE);
     const qty = cellNumber(cF);
@@ -135,6 +152,7 @@ export async function readPurchasesFile(file: File): Promise<ParsedLedger> {
     if (date) curDate = date;
     if (si) curSi = si;
     if (supplier) curSupplier = supplier;
+    if (project) curProject = project;
 
     if (!hasItem) continue;
 
@@ -147,6 +165,7 @@ export async function readPurchasesFile(file: File): Promise<ParsedLedger> {
       date: curDate,
       siNo: unreadable ? "" : curSi,
       supplier: unreadable ? "" : curSupplier,
+      project: curProject,
       particulars,
       unitPrice: price ?? 0,
       quantity: qty ?? 1,
@@ -193,8 +212,10 @@ export async function readPurchasesFile(file: File): Promise<ParsedLedger> {
   }
 
   // Attach stored subtotals: an H value sits on the LAST row of its block.
-  for (let r = 4; r <= ws.rowCount; r++) {
-    const hVal = cellNumber(ws.getRow(r).getCell(8).value);
+  // (Legacy layout only — the 8-column export has AMOUNT in H and no
+  // subtotal column, so those numbers must never read as subtotals.)
+  for (let r = 4; colSubtotal !== 0 && r <= ws.rowCount; r++) {
+    const hVal = cellNumber(ws.getRow(r).getCell(colSubtotal).value);
     if (hVal === null) continue;
     const owner = blocks.find(
       (b) => b.lines[b.lines.length - 1].row === r || (b.lines[0].row <= r && b.lines[b.lines.length - 1].row >= r),
@@ -246,6 +267,7 @@ export interface ExportRow {
   si_no: string;
   supplier: string | null;
   particulars_raw: string;
+  project_name?: string | null;
   unit_price: number;
   quantity: number;
   amount: number;
@@ -255,11 +277,12 @@ export interface ExportRow {
 /**
  * Build the PURCHASES-layout workbook from flat ledger rows. Returns a Blob.
  * Title in A1, headers on row 3, data from row 4 — every line carries its own
- * date / SI# / supplier (nothing left blank). Styling per the user's spec:
- * the data sits in a real Excel table with the blue "Table Style Medium 9"
- * (banded rows), Arial 11 everywhere, headers capitalized+bold in white on
+ * date / SI# / supplier / project (nothing left blank). Styling per the user's
+ * spec: the data sits in a real Excel table with the blue "Table Style Medium
+ * 9" (banded rows), Arial 11 everywhere, headers capitalized+bold in white on
  * the style's blue, every cell center-aligned, accounting/long-date number
- * formats — and nothing to the right of AMOUNT.
+ * formats — and nothing to the right of AMOUNT. The PROJECT column means an
+ * export re-imports losslessly (the reader detects this 8-column layout).
  */
 export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
   const ExcelJS = (await import("exceljs")).default ?? (await import("exceljs"));
@@ -273,7 +296,7 @@ export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
     col.width = COL_WIDTHS[i - 1];
     col.alignment = { horizontal: "center" };
     if (i === 1) col.numFmt = LONG_DATE_FMT;
-    if (i === 5 || i === 7) col.numFmt = ACCOUNTING_FMT;
+    if (i === 6 || i === 8) col.numFmt = ACCOUNTING_FMT;
   }
 
   // Title (row 1); the table itself starts at A3 (headers) → A4 (data).
@@ -290,6 +313,7 @@ export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
       x.si_no,
       x.supplier ?? "",
       x.particulars_raw,
+      x.project_name ?? "",
       Number(x.unit_price),
       Number(x.quantity),
       Number(x.amount),
@@ -321,7 +345,7 @@ export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
       cell.font = { name: FONT_NAME, size: 11 };
       cell.alignment = { horizontal: "center" };
       if (col === 1) cell.numFmt = LONG_DATE_FMT;
-      if (col === 5 || col === 7) cell.numFmt = ACCOUNTING_FMT;
+      if (col === 6 || col === 8) cell.numFmt = ACCOUNTING_FMT;
     });
   }
 
