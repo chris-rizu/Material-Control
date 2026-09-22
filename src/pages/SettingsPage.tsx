@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../lib/supabase";
 import { signOut, updateProfile } from "../lib/queries";
+import { backupReceiptsToDrive } from "../lib/driveReceipts";
 import { IconSettings, IconLogout } from "../components/icons";
 
 export default function SettingsPage() {
@@ -19,6 +20,25 @@ export default function SettingsPage() {
 
   const [name, setName] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [backup, setBackup] = useState<{ running: boolean; progress?: string; result?: string; ok: boolean }>({ running: false, ok: true });
+
+  async function runBackup() {
+    setBackup({ running: true, ok: true });
+    try {
+      const r = await backupReceiptsToDrive(({ done, total }) =>
+        setBackup({ running: true, ok: true, progress: total ? `Copying photo ${Math.min(done + 1, total)} of ${total}…` : "No receipt photos to back up yet." }));
+      setBackup({
+        running: false, ok: r.failed === 0,
+        result: r.total
+          ? `Backed up ${r.copied} photo${r.copied === 1 ? "" : "s"} to Google Drive`
+            + (r.skipped ? ` — ${r.skipped} already there` : "")
+            + (r.failed ? `, ${r.failed} failed (try again later)` : "") + "."
+          : "No receipt photos to back up yet.",
+      });
+    } catch (e) {
+      setBackup({ running: false, ok: false, result: (e as Error).message });
+    }
+  }
 
   const save = useMutation({
     mutationFn: () => updateProfile(me.data!.uid, { full_name: (name ?? me.data!.prof?.full_name ?? "").trim() }),
@@ -71,6 +91,20 @@ export default function SettingsPage() {
           Online database: Supabase, Singapore region<br />
           Weekly backup: use “Export (Google Sheets)” on the Purchases page — each export is kept as its own tab.
         </div>
+      </div>
+
+      <div className="card" style={{ maxWidth: 560 }}>
+        <div className="card-head">Google Drive backup</div>
+        <div className="muted small" style={{ marginBottom: 10, lineHeight: 1.7 }}>
+          Copies every receipt photo to the “Material Control app receipts” folder in Google Drive.
+          Photos already there are skipped, so it's safe to run again. New photos are copied
+          automatically as they're added.
+        </div>
+        <button onClick={runBackup} disabled={backup.running}>
+          {backup.running ? "Backing up…" : "Back up receipt photos now"}
+        </button>
+        {backup.progress && <div className="muted small" style={{ marginTop: 8 }}>{backup.progress}</div>}
+        {backup.result && <div className={`banner ${backup.ok ? "ok" : "err"}`} style={{ marginTop: 8 }}>{backup.result}</div>}
       </div>
     </>
   );

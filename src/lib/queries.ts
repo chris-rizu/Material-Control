@@ -3,6 +3,7 @@ import { supabase } from "./supabase";
 import { canonicalKey, buildSearchName, parseParticulars } from "./parse";
 import { toReceiptJpeg } from "./receiptImage";
 import { forgetReceiptPhoto } from "./receiptPhotos";
+import { copyNewReceipt } from "./driveReceipts";
 import type {
   Category, Material, MaterialAlias, Profile, Project, PurchaseFlat, Receipt, SearchHit, Supplier,
   InvoiceBlock, ParsedParticulars,
@@ -502,6 +503,8 @@ export async function uploadReceipt(args: {
   await logActivity("insert", "receipts", insRow?.id ?? null,
     receiptLabel(siNo, purchaseDate, file instanceof File ? file.name : "photo"),
     { storage_path: path, file_size: blob.size, replaced: Boolean(existing) });
+  // best-effort Google Drive copy of the same photo — never blocks the upload
+  copyNewReceipt({ purchase_date: purchaseDate, si_no: siNo, supplier_id: supplierId }, blob);
   return { replaced: Boolean(existing) };
 }
 
