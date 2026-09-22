@@ -8,6 +8,7 @@ import {
 import { parseParticulars } from "../lib/parse";
 import { guessCategoryTarget } from "../lib/guess";
 import { isDiscountParticulars, readPurchasesFile } from "../lib/excel";
+import { useMe } from "../lib/useMe";
 import { useSheetsExport } from "../lib/sheets";
 import SheetsExportBanner from "../components/SheetsExportBanner";
 import type { ParsedLedger } from "../lib/excel";
@@ -35,10 +36,7 @@ export default function ImportPage() {
   const sheet = useSheetsExport();
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const me = useQuery({
-    queryKey: ["me"],
-    queryFn: async () => (await supabase.auth.getUser()).data.user?.id ?? "",
-  });
+  const me = useMe();
 
   async function pickFile(f: File | null) {
     setParsed(null); setDupe(null); setResult(null); setError(null); setForce(false);
@@ -58,7 +56,7 @@ export default function ImportPage() {
   const commit = useMutation({
     mutationFn: async () => {
       if (!parsed || !cats.data) throw new Error("Nothing to import.");
-      const userId = me.data ?? "";
+      const userId = me.data?.id ?? "";
 
       // 1) Match every distinct particulars string once. Categories come from
       //    the keyword rules — and any category the rules name that the

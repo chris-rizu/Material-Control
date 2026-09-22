@@ -1,8 +1,8 @@
 import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { supabase } from "../lib/supabase";
 import { deletePurchase, fetchCategories, fetchPurchasesFlat } from "../lib/queries";
+import { useMe } from "../lib/useMe";
 import { useSheetsExport } from "../lib/sheets";
 import SheetsExportBanner from "../components/SheetsExportBanner";
 import { fmtDate, php, qtyFmt, todayISO } from "../lib/format";
@@ -23,16 +23,7 @@ export default function LedgerPage() {
   const qc = useQueryClient();
   const ledger = useQuery({ queryKey: ["ledger"], queryFn: fetchPurchasesFlat });
   const cats = useQuery({ queryKey: ["categories"], queryFn: fetchCategories });
-  const me = useQuery({
-    queryKey: ["me"],
-    queryFn: async () => {
-      const { data } = await supabase.auth.getUser();
-      const pid = data.user?.id;
-      if (!pid) return { id: "", role: "viewer" as string };
-      const { data: prof } = await supabase.from("profiles").select("role").eq("id", pid).maybeSingle();
-      return { id: pid, role: (prof?.role as string) ?? "viewer" };
-    },
-  });
+  const me = useMe();
   const canWrite = me.data?.role === "owner" || me.data?.role === "encoder";
 
   const [q, setQ] = useState("");

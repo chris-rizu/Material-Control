@@ -1,18 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "../lib/supabase";
 import { fetchCategories, fetchSuppliers } from "../lib/queries";
+import { useMe } from "../lib/useMe";
 import InvoiceBlockEditor from "../components/InvoiceBlockEditor";
 
 export default function EntryPage() {
   const cats = useQuery({ queryKey: ["categories"], queryFn: fetchCategories });
   const sups = useQuery({ queryKey: ["suppliers"], queryFn: fetchSuppliers });
-  const me = useQuery({
-    queryKey: ["me"],
-    queryFn: async () => {
-      const { data } = await supabase.auth.getUser();
-      return data.user?.id ?? "";
-    },
-  });
+  const me = useMe();
 
   if (cats.isLoading || sups.isLoading || me.isLoading) {
     return <div className="page-loading"><span className="spinner" /> Loading…</div>;
@@ -33,7 +27,7 @@ export default function EntryPage() {
       <InvoiceBlockEditor
         categories={cats.data ?? []}
         suppliers={sups.data ?? []}
-        userId={me.data ?? ""}
+        userId={me.data?.id ?? ""}
       />
     </>
   );

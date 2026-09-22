@@ -1,16 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "../lib/supabase";
 import { listProfiles, updateProfile } from "../lib/queries";
+import { useMe } from "../lib/useMe";
 import { IconUsers } from "../components/icons";
 import type { Role } from "../lib/types";
 
 /** Owner-only: manage staff roles and active flag. */
 export default function AdminUsersPage() {
   const qc = useQueryClient();
-  const me = useQuery({
-    queryKey: ["me"],
-    queryFn: async () => (await supabase.auth.getUser()).data.user?.id ?? "",
-  });
+  const me = useMe();
   const profiles = useQuery({ queryKey: ["profiles"], queryFn: listProfiles });
 
   const save = useMutation({
@@ -46,7 +43,7 @@ export default function AdminUsersPage() {
             </thead>
             <tbody>
               {(profiles.data ?? []).map((p) => {
-                const isSelf = p.id === me.data;
+                const isSelf = p.id === me.data?.id;
                 return (
                   <tr key={p.id}>
                     <td>{p.email || "—"}</td>

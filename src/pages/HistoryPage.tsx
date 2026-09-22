@@ -4,8 +4,8 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "../lib/supabase";
 import { fetchActivity, restoreActivity } from "../lib/queries";
+import { useMe } from "../lib/useMe";
 import { IconHistory, IconUndo } from "../components/icons";
 import type { ActivityEntry } from "../lib/types";
 
@@ -42,16 +42,7 @@ export default function HistoryPage() {
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [restoringId, setRestoringId] = useState<number | null>(null);
 
-  const me = useQuery({
-    queryKey: ["me"],
-    queryFn: async () => {
-      const { data } = await supabase.auth.getUser();
-      const pid = data.user?.id;
-      if (!pid) return { id: "", role: "viewer" as string };
-      const { data: prof } = await supabase.from("profiles").select("role").eq("id", pid).maybeSingle();
-      return { id: pid, role: (prof?.role as string) ?? "viewer" };
-    },
-  });
+  const me = useMe();
   const canRestore = me.data?.role === "owner" || me.data?.role === "encoder";
 
   const log = useQuery({

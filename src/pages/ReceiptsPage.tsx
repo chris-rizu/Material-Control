@@ -9,8 +9,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "../lib/supabase";
 import { deleteReceipt, fetchReceipts, fetchSuppliers, refileReceipt, uploadReceipt } from "../lib/queries";
+import { useMe } from "../lib/useMe";
 import { loadReceiptPhoto, peekReceiptPhoto, preloadReceiptPhotos } from "../lib/receiptPhotos";
 import { siDigits, toSiNo, todayISO } from "../lib/format";
 import SiInput from "../components/SiInput";
@@ -48,16 +48,7 @@ export default function ReceiptsPage() {
 
   const receiptsQ = useQuery({ queryKey: ["receipts"], queryFn: fetchReceipts });
   const supsQ = useQuery({ queryKey: ["suppliers"], queryFn: fetchSuppliers });
-  const me = useQuery({
-    queryKey: ["me"],
-    queryFn: async () => {
-      const { data } = await supabase.auth.getUser();
-      const pid = data.user?.id;
-      if (!pid) return { id: "", role: "viewer" as string };
-      const { data: prof } = await supabase.from("profiles").select("role").eq("id", pid).maybeSingle();
-      return { id: pid, role: (prof?.role as string) ?? "viewer" };
-    },
-  });
+  const me = useMe();
   const canWrite = me.data?.role === "owner" || me.data?.role === "encoder";
 
   const [date, setDate] = useState(() => pre.purchase_date || todayISO());

@@ -16,6 +16,7 @@ import {
   fetchSuppliers, matchMaterial, indexReceipts, receiptMismatch, refileReceipt, updatePurchase,
   uploadReceipt,
 } from "../lib/queries";
+import { useMe } from "../lib/useMe";
 import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { parseParticulars } from "../lib/parse";
 import { guessCategoryTarget } from "../lib/guess";
@@ -89,16 +90,7 @@ export default function PurchasePage() {
   useEffect(() => {
     if (rcpts.data?.length) preloadReceiptPhotos(rcpts.data.map((r) => r.storage_path));
   }, [rcpts.data]);
-  const me = useQuery({
-    queryKey: ["me"],
-    queryFn: async () => {
-      const { data } = await supabase.auth.getUser();
-      const pid = data.user?.id;
-      if (!pid) return { id: "", role: "viewer" as string };
-      const { data: prof } = await supabase.from("profiles").select("role").eq("id", pid).maybeSingle();
-      return { id: pid, role: (prof?.role as string) ?? "viewer" };
-    },
-  });
+  const me = useMe();
   const canWrite = me.data?.role === "owner" || me.data?.role === "encoder";
 
   const [search, setSearch] = useState("");
