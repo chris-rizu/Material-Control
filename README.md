@@ -94,7 +94,7 @@ npm run app:installer # build release\Material Control Setup <version>.exe insta
 
 Use the sun/moon button in the top bar. **Dark** (default) is the navy look;
 **light** turns the sidebar, header, and content white. The choice is remembered
-per browser/device, and the sidebar logo swaps automatically (dark variant on
+per browser/device, and the sidebar logo (QUALI-T gear + bolt) swaps automatically (light gear on
 navy, full-color on white).
 
 ## Supplier typo guard

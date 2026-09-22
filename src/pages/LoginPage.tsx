@@ -3,8 +3,8 @@ import { signIn } from "../lib/queries";
 import { getTheme } from "../lib/theme";
 
 export default function LoginPage() {
-  // dark chrome → light-line logo; light chrome → the original full-color logo
-  const [logoSrc] = useState(() => (getTheme() === "dark" ? "logo-dark.svg" : "logo.png"));
+  // dark chrome → light-gear logo; light chrome → the full-color logo
+  const [logoSrc] = useState(() => (getTheme() === "dark" ? "logo-dark.png" : "logo.png"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +23,7 @@ export default function LoginPage() {
     <div className="login-shell">
       <div className="login-card">
         <div className="brand">
-          <img className="brand-mark" src={logoSrc} alt="Material Control logo" />
+          <img className="brand-mark" src={logoSrc} alt="QUALI-T Builders Corp. logo" />
           <div>
             <div className="brand-name">Material Control</div>
             <div className="brand-sub">RORO TRANSPORT · CEBU</div>

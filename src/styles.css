@@ -38,7 +38,6 @@
   --side-dim: #8b98a6;
   --side-hover: rgba(255, 255, 255, 0.07);
   --side-title: #ffffff;
-  --brand-ring: rgba(255, 255, 255, 0.16);
 
   /* table + toolbar surfaces */
   --thead-bg: #1a2634;
@@ -95,7 +94,6 @@
   --side-dim: #64748b;
   --side-hover: #f0f4f8;
   --side-title: #10192b;
-  --brand-ring: rgba(16, 25, 43, 0.12);
 
   --thead-bg: #f8fafc;
   --draft-bg: #f7f9fe;
@@ -164,8 +162,7 @@ pre { background: var(--chip-bg); padding: 12px; overflow-x: auto; font-size: 12
 .brand { display: flex; align-items: center; gap: 11px; padding: 6px 12px 20px 8px; }
 .brand > div { min-width: 0; }
 .brand-mark {
-  width: 40px; height: 40px; flex: 0 0 auto; display: block; object-fit: cover;
-  box-shadow: 0 0 0 1px var(--brand-ring);
+  width: 40px; height: 40px; flex: 0 0 auto; display: block; object-fit: contain;
 }
 .brand-name { font-weight: 700; font-size: 15.5px; color: var(--side-title); line-height: 1.2; letter-spacing: -0.01em; }
 .brand-sub {
@@ -963,7 +960,7 @@ label.field .si-box { margin-top: 5px; }
 .rc-field > .rc-lbl { font-size: 12px; color: var(--muted); }
 .rc-file { display: flex; align-items: center; gap: 10px; }
 .rc-thumb {
-  width: 56px; height: 56px; object-fit: cover; object-position: top;
+  width: 56px; height: 56px; object-fit: contain; object-position: top;
   border: 1px solid var(--line-strong); background: #fff;
 }
 .rc-choose {
@@ -983,7 +980,7 @@ label.field .si-box { margin-top: 5px; }
 /* in-row re-filing editors (Edit a filed receipt's date / SI# / supplier) */
 .rc-table td input, .rc-table td select { width: 100%; min-width: 0; font-size: 13px; }
 .rc-thumb-sm {
-  width: 46px; height: 46px; object-fit: cover; object-position: top;
+  width: 46px; height: 46px; object-fit: contain; object-position: top;
   border: 1px solid var(--line-strong); background: #fff; cursor: zoom-in;
 }
 
@@ -996,7 +993,7 @@ label.field .si-box { margin-top: 5px; }
 }
 .pp-photo:hover { border-color: var(--primary); color: var(--primary); }
 .pp-photo input[type="file"] { display: none; }
-.pp-photo img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.pp-photo img { width: 100%; height: 100%; object-fit: contain; object-position: top; }
 .pp-photo.staged { border-style: solid; border-color: var(--primary); }
 
 

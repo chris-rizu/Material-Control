@@ -52,13 +52,13 @@ export default function Layout({ profile }: { profile: Profile | null }) {
   const bell = useDropdown<HTMLDivElement>();
   const user = useDropdown<HTMLDivElement>();
 
-  const logoSrc = theme === "dark" ? "logo-dark.svg" : "logo.png";
+  const logoSrc = theme === "dark" ? "logo-dark.png" : "logo.png";
 
   return (
     <div className="shell">
       <aside className={"sidebar" + (mini ? " mini" : "")}>
         <div className="brand">
-          <img className="brand-mark" src={logoSrc} alt="Material Control logo" />
+          <img className="brand-mark" src={logoSrc} alt="QUALI-T Builders Corp. logo" />
           <div>
             <div className="brand-name">Material Control</div>
             <div className="brand-sub">Purchases · Inventory · Made Simple</div>
