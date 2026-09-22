@@ -7,9 +7,11 @@ import {
 } from "../lib/queries";
 import { parseParticulars } from "../lib/parse";
 import { guessCategoryTarget } from "../lib/guess";
-import { buildPurchasesWorkbook, readPurchasesFile } from "../lib/excel";
+import { readPurchasesFile } from "../lib/excel";
+import { useSheetsExport } from "../lib/sheets";
+import SheetsExportBanner from "../components/SheetsExportBanner";
 import type { ParsedLedger } from "../lib/excel";
-import { php, todayISO } from "../lib/format";
+import { php } from "../lib/format";
 import type { Category, ParsedParticulars } from "../lib/types";
 import { IconDownload, IconInvoice, IconUpload } from "../components/icons";
 
@@ -30,7 +32,7 @@ export default function ImportPage() {
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const sheet = useSheetsExport();
   const fileInput = useRef<HTMLInputElement>(null);
 
   const me = useQuery({
@@ -165,31 +167,8 @@ export default function ImportPage() {
     onError: (e: Error) => setError(e.message),
   });
 
-  async function exportExcel() {
-    setExporting(true);
-    try {
-      const blob = await buildPurchasesWorkbook(
-        (ledger.data ?? []).map((r) => ({
-          purchase_date: r.purchase_date,
-          si_no: r.si_no,
-          supplier: r.supplier,
-          particulars_raw: r.particulars_raw,
-          project_name: r.project_name,
-          unit_price: Number(r.unit_price),
-          quantity: Number(r.quantity),
-          amount: Number(r.amount),
-          line_seq: r.line_seq,
-        })),
-      );
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `PURCHASES_export_${todayISO()}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } finally {
-      setExporting(false);
-    }
+  function exportSheets() {
+    void sheet.run(ledger.data ?? []);
   }
 
   const lastImport = imports.data?.[0];
@@ -212,14 +191,15 @@ export default function ImportPage() {
 
       {/* ---------------- EXPORT ---------------- */}
       <div className="card">
-        <div className="card-head"><IconDownload size={16} /> Export to Excel</div>
+        <div className="card-head"><IconDownload size={16} /> Export to Google Sheets</div>
         <p className="muted small" style={{ margin: "0 0 12px" }}>
-          Downloads the full ledger as <b>PURCHASES_export_{todayISO()}.xlsx</b> — every line,
-          same columns as the original workbook. Handy as a backup copy.
+          Builds the full ledger as a new Google Sheets tab and opens it — every line,
+          same columns and look as the original workbook. In Google Sheets,{" "}
+          <b>File → Download → Microsoft Excel</b> gives a copy that imports back here.
         </p>
         <div className="imp-actions" style={{ justifyContent: "flex-start" }}>
-          <button onClick={exportExcel} disabled={exporting || lineCount === 0}>
-            <IconDownload size={15} /> {exporting ? "Building…" : `Export ${lineCount.toLocaleString()} lines`}
+          <button onClick={exportSheets} disabled={sheet.exporting || lineCount === 0}>
+            <IconDownload size={15} /> {sheet.exporting ? "Building…" : `Export ${lineCount.toLocaleString()} lines`}
           </button>
           {lastImport && (
             <span className="muted small">
@@ -228,6 +208,7 @@ export default function ImportPage() {
             </span>
           )}
         </div>
+        {sheet.result && <div style={{ marginTop: 12 }}><SheetsExportBanner result={sheet.result} onClose={sheet.clear} /></div>}
       </div>
 
       {/* ---------------- IMPORT ---------------- */}

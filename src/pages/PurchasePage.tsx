@@ -20,7 +20,8 @@ import { filterPurchases, anyFilterOn } from "../lib/filter";
 import { parseParticulars } from "../lib/parse";
 import { guessCategoryTarget } from "../lib/guess";
 import { matchSuppliers } from "../lib/supplierMatch";
-import { buildPurchasesWorkbook } from "../lib/excel";
+import { useSheetsExport } from "../lib/sheets";
+import SheetsExportBanner from "../components/SheetsExportBanner";
 import { displayParticulars, php, siDigits, toSiNo, todayISO } from "../lib/format";
 import { comparePurchases, type SortDir, type SortKey } from "../lib/sort";
 import PredictiveMaterialInput from "../components/PredictiveMaterialInput";
@@ -115,7 +116,7 @@ export default function PurchasePage() {
   const [draftMatId, setDraftMatId] = useState<number | null>(null);
   const [editMatId, setEditMatId] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const [exporting, setExporting] = useState(false);
+  const sheet = useSheetsExport();
   // receipt-photo popover: the SI# clicked (blank-SI "same receipt" lines share
   // the photo keyed to date + supplier)
   const [siMenu, setSiMenu] = useState<{
@@ -501,31 +502,8 @@ export default function PurchasePage() {
     });
   }
 
-  async function exportExcel() {
-    setExporting(true);
-    try {
-      const blob = await buildPurchasesWorkbook(
-        rows.map((r) => ({
-          purchase_date: r.purchase_date,
-          si_no: r.si_no,
-          supplier: r.supplier,
-          particulars_raw: r.particulars_raw,
-          project_name: r.project_name,
-          unit_price: Number(r.unit_price),
-          quantity: Number(r.quantity),
-          amount: Number(r.amount),
-          line_seq: r.line_seq,
-        })),
-      );
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `PURCHASES_export_${todayISO()}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } finally {
-      setExporting(false);
-    }
+  function exportSheets() {
+    void sheet.run(rows);
   }
 
   if (ledger.isLoading || me.isLoading) {
@@ -551,11 +529,13 @@ export default function PurchasePage() {
         </div>
         <div className="page-actions">
           {canWrite && <Link to="/import"><button><IconUpload size={16} /> Import (Excel)</button></Link>}
-          <button onClick={exportExcel} disabled={exporting || rows.length === 0}>
-            <IconDownload size={16} /> {exporting ? "Building…" : "Export (Excel)"}
+          <button onClick={exportSheets} disabled={sheet.exporting || rows.length === 0}>
+            <IconDownload size={16} /> {sheet.exporting ? "Building…" : "Export (Google Sheets)"}
           </button>
         </div>
       </div>
+
+      <SheetsExportBanner result={sheet.result} onClose={sheet.clear} />
 
       <div className={"cols" + (railOpen ? "" : " cols-norail")}>
         <div className="main">
@@ -1047,8 +1027,8 @@ export default function PurchasePage() {
                   <IconUpload size={16} /> Import from Excel <span className="qa-arrow"><IconArrowRight size={15} /></span>
                 </button>
               )}
-              <button className="qa" onClick={exportExcel} disabled={!rows.length}>
-                <IconDownload size={16} /> Export to Excel <span className="qa-arrow"><IconArrowRight size={15} /></span>
+              <button className="qa" onClick={exportSheets} disabled={sheet.exporting || !rows.length}>
+                <IconDownload size={16} /> Export to Google Sheets <span className="qa-arrow"><IconArrowRight size={15} /></span>
               </button>
               <button className="qa" onClick={() => navigate("/materials")}>
                 <IconBox size={16} /> View All Particulars <span className="qa-arrow"><IconArrowRight size={15} /></span>

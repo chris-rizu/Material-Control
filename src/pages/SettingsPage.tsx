@@ -69,7 +69,7 @@ export default function SettingsPage() {
         <div className="muted small" style={{ lineHeight: 1.9 }}>
           Material Control v1.0.0 · RORO Transport<br />
           Online database: Supabase, Singapore region<br />
-          Weekly backup: use “Export (Excel)” on the Purchases page and keep the file.
+          Weekly backup: use “Export (Google Sheets)” on the Purchases page — each export is kept as its own tab.
         </div>
       </div>
     </>

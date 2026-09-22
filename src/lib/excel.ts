@@ -1,24 +1,11 @@
-// Excel I/O: read PURCHASES workbooks into blocks, and write the ledger back
-// out ("can be opened in Excel"): 8 columns (PROJECT included), every cell
-// center-aligned, Arial 11, dates as long dates, money in the accounting
-// format, every line carrying its own date / SI# / supplier / project. The
-// data sits in a real Excel table with the blue Table Style Medium 9. Nothing
-// sits to the right of AMOUNT. exceljs is loaded lazily to keep startup fast.
+// Excel import: read PURCHASES workbooks into blocks. (Export moved to Google
+// Sheets — see sheets.ts.) exceljs is loaded lazily to keep startup fast.
 // The reader accepts BOTH layouts — the legacy 7-column workbook (optional
-// col-H subtotals) and this app's own 8-column export (PROJECT in E, amount
-// in H) — detected by the header row, so an export round-trips losslessly.
+// col-H subtotals) and the app's own 8-column export (PROJECT in E, amount
+// in H, what a Google Sheets export downloads as .xlsx) — detected by the
+// header row, so an export round-trips losslessly.
 
 import type ExcelJSNS from "exceljs";
-
-export const ACCOUNTING_FMT = '_-* #,##0.00_-;\\-* #,##0.00_-;_-* "-"??_-;_-@_-';
-export const LONG_DATE_FMT = "[$-F800]dddd\\,\\ mmmm\\ dd\\,\\ yyyy";
-
-export const COL_WIDTHS = [32.53, 16.73, 30.6, 54.27, 20.0, 18.13, 14.0, 16.33];
-export const HEADERS = [
-  "DATE", "INVOICE/RECEIPT", "SUPPLIER'S NAME", "PARTICULARS", "PROJECT",
-  "UNIT PRICE", "QUANTITY", "AMOUNT",
-];
-export const FONT_NAME = "Arial";
 
 // --- import -----------------------------------------------------------------
 
@@ -258,99 +245,4 @@ export async function readPurchasesFile(file: File): Promise<ParsedLedger> {
   );
 
   return { blocks, lineCount: lines.length, storedTotal, repairedTotal, repairs };
-}
-
-// --- export -----------------------------------------------------------------
-
-export interface ExportRow {
-  purchase_date: string;
-  si_no: string;
-  supplier: string | null;
-  particulars_raw: string;
-  project_name?: string | null;
-  unit_price: number;
-  quantity: number;
-  amount: number;
-  line_seq: number;
-}
-
-/**
- * Build the PURCHASES-layout workbook from flat ledger rows. Returns a Blob.
- * Title in A1, headers on row 3, data from row 4 — every line carries its own
- * date / SI# / supplier / project (nothing left blank). Styling per the user's
- * spec: the data sits in a real Excel table with the blue "Table Style Medium
- * 9" (banded rows), Arial 11 everywhere, headers capitalized+bold in white on
- * the style's blue, every cell center-aligned, accounting/long-date number
- * formats — and nothing to the right of AMOUNT. The PROJECT column means an
- * export re-imports losslessly (the reader detects this 8-column layout).
- */
-export async function buildPurchasesWorkbook(rows: ExportRow[]): Promise<Blob> {
-  const ExcelJS = (await import("exceljs")).default ?? (await import("exceljs"));
-  const wb = new ExcelJS.Workbook();
-  wb.creator = "Material Control";
-  const ws = wb.addWorksheet("Sheet1");
-
-  // column widths + column-wide styles (centered, money/dates formatted)
-  for (let i = 1; i <= COL_WIDTHS.length; i++) {
-    const col = ws.getColumn(i);
-    col.width = COL_WIDTHS[i - 1];
-    col.alignment = { horizontal: "center" };
-    if (i === 1) col.numFmt = LONG_DATE_FMT;
-    if (i === 6 || i === 8) col.numFmt = ACCOUNTING_FMT;
-  }
-
-  // Title (row 1); the table itself starts at A3 (headers) → A4 (data).
-  const title = ws.getCell("A1");
-  title.value = "PURCHASES";
-  title.font = { name: FONT_NAME, size: 11 };
-
-  // UTC midnight: exceljs serializes Dates as UTC, so a local-midnight Date
-  // in Manila (UTC+8) would land on the PREVIOUS day in Excel.
-  const tableRows: ExcelJSNS.CellValue[][] = rows.map((x) => {
-    const [y, m, d] = x.purchase_date.slice(0, 10).split("-").map(Number);
-    return [
-      new Date(Date.UTC(y, m - 1, d)),
-      x.si_no,
-      x.supplier ?? "",
-      x.particulars_raw,
-      x.project_name ?? "",
-      Number(x.unit_price),
-      Number(x.quantity),
-      Number(x.amount),
-    ];
-  });
-
-  ws.addTable({
-    name: "Purchases",
-    ref: "A3",
-    headerRow: true,
-    totalsRow: false,
-    style: { theme: "TableStyleMedium9", showRowStripes: true },
-    columns: HEADERS.map((h) => ({ name: h, filterButton: false })),
-    rows: tableRows,
-  });
-
-  // direct formatting wins over the table style, so pin everything per cell:
-  // Arial 11 everywhere, headers bold in white (the style's blue header and
-  // row banding come from Table Style Medium 9), money/dates formatted,
-  // everything centered — per-cell styles also keep the formats safe in
-  // readers that ignore column-level styles
-  const headerRow = ws.getRow(3);
-  headerRow.eachCell((cell) => {
-    cell.font = { name: FONT_NAME, size: 11, bold: true, color: { argb: "FFFFFFFF" } };
-    cell.alignment = { horizontal: "center" };
-  });
-  for (let r = 4; r < 4 + tableRows.length; r++) {
-    ws.getRow(r).eachCell((cell, col) => {
-      cell.font = { name: FONT_NAME, size: 11 };
-      cell.alignment = { horizontal: "center" };
-      if (col === 1) cell.numFmt = LONG_DATE_FMT;
-      if (col === 6 || col === 8) cell.numFmt = ACCOUNTING_FMT;
-    });
-  }
-
-  const buf = await wb.xlsx.writeBuffer();
-  return new Blob([buf], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
 }

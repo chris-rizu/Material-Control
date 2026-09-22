@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { deletePurchase, fetchCategories, fetchPurchasesFlat } from "../lib/queries";
-import { buildPurchasesWorkbook } from "../lib/excel";
+import { useSheetsExport } from "../lib/sheets";
+import SheetsExportBanner from "../components/SheetsExportBanner";
 import { fmtDate, php, qtyFmt, todayISO } from "../lib/format";
 import {
   IconLedger, IconDownload, IconPlus, IconUpload, IconCoins, IconX,
@@ -37,7 +38,7 @@ export default function LedgerPage() {
   const [q, setQ] = useState("");
   const [month, setMonth] = useState("");
   const [cat, setCat] = useState<number | "">("");
-  const [exporting, setExporting] = useState(false);
+  const sheet = useSheetsExport();
 
   const del = useMutation({
     mutationFn: (id: number) => deletePurchase(id),
@@ -91,30 +92,8 @@ export default function LedgerPage() {
     return { grand, monthTotal, thisMonth, invoices: blocks.length, top };
   }, [filtered, blocks]);
 
-  async function exportExcel() {
-    setExporting(true);
-    try {
-      const blob = await buildPurchasesWorkbook(
-        (ledger.data ?? []).map((r) => ({
-          purchase_date: r.purchase_date,
-          si_no: r.si_no,
-          supplier: r.supplier,
-          particulars_raw: r.particulars_raw,
-          unit_price: Number(r.unit_price),
-          quantity: Number(r.quantity),
-          amount: Number(r.amount),
-          line_seq: r.line_seq,
-        })),
-      );
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `PURCHASES_export_${todayISO()}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } finally {
-      setExporting(false);
-    }
+  function exportSheets() {
+    void sheet.run(ledger.data ?? []);
   }
 
   if (ledger.isLoading || me.isLoading) {
@@ -133,11 +112,13 @@ export default function LedgerPage() {
           <div className="page-sub">Every line item, grouped per invoice — like your Excel, but always arithmetically honest.</div>
         </div>
         <div className="page-actions">
-          <button onClick={exportExcel} disabled={exporting || !ledger.data?.length}>
-            <IconDownload size={16} /> {exporting ? "Building…" : "Export to Excel"}
+          <button onClick={exportSheets} disabled={sheet.exporting || !ledger.data?.length}>
+            <IconDownload size={16} /> {sheet.exporting ? "Building…" : "Export to Google Sheets"}
           </button>
         </div>
       </div>
+
+      <SheetsExportBanner result={sheet.result} onClose={sheet.clear} />
 
       {filtered.length > 0 && (
         <div className="tiles">
