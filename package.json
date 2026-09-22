@@ -1,7 +1,7 @@
 {
   "name": "material-control-app",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Material Control — purchases & inventory system for RORO Transport",
   "author": "RORO Transport",
