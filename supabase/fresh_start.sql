@@ -1,12 +1,17 @@
 -- fresh_start.sql — wipe ALL ledger/catalog data so the client starts encoding
 -- their own data from zero.
 --
--- HOW TO RUN: Supabase dashboard → SQL Editor → paste this whole file → Run.
--- Run ONCE, before the client starts encoding (not undoable).
+-- HOW TO RUN — two steps:
+--   1. Supabase dashboard → SQL Editor → paste this whole file → Run.
+--   2. Supabase dashboard → Storage → open the `receipts` bucket →
+--      select all files → Delete (the SQL below is not allowed to touch
+--      Storage directly — Supabase blocks it to prevent accidents).
+--   Run ONCE, before the client starts encoding (not undoable).
 --
 -- WIPED (rows + ID counters back to 1):
---   purchases, receipts (+ the photo FILES in Storage), material_aliases,
---   materials, categories, suppliers, projects, import_batches, activity_log
+--   purchases, receipts, material_aliases, materials, categories,
+--   suppliers, projects, import_batches, activity_log
+--   (+ the photo FILES in the receipts bucket, step 2 above)
 --
 -- KEPT (untouched):
 --   profiles + auth users  — everyone keeps signing in as before
@@ -18,9 +23,6 @@
 -- Historical source of the old data stays on file: PURCHASES (1).xlsx.
 
 begin;
-
--- photo files first: if this fails (permissions), nothing below is touched
-delete from storage.objects where bucket_id = 'receipts';
 
 truncate table
   public.purchases,
@@ -36,7 +38,7 @@ restart identity;
 
 commit;
 
--- expected: every wiped table 0, storage photos 0,
+-- expected: every wiped table 0,
 --           profiles and plan_payments UNCHANGED (same numbers as before)
 select 'purchases' as t, count(*) from public.purchases
 union all select 'receipts', count(*) from public.receipts
@@ -47,6 +49,5 @@ union all select 'suppliers', count(*) from public.suppliers
 union all select 'projects', count(*) from public.projects
 union all select 'import_batches', count(*) from public.import_batches
 union all select 'activity_log', count(*) from public.activity_log
-union all select 'storage photos', count(*) from storage.objects where bucket_id = 'receipts'
 union all select 'profiles (kept)', count(*) from public.profiles
 union all select 'plan_payments (kept)', count(*) from public.plan_payments;
