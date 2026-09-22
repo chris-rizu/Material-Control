@@ -20,6 +20,8 @@ export interface ImportedLine {
   quantity: number;
   amountStored: number | null;
   receiptQuality: "ok" | "unreadable" | "no-invoice";
+  /** true for "DISCOUNT n%" adjustment rows — negated on import, never a material */
+  discount: boolean;
 }
 
 export interface ImportedBlock {
@@ -33,7 +35,7 @@ export interface ImportedBlock {
 
 export interface RepairNote {
   row: number;
-  kind: "missing-amount" | "wrong-subtotal" | "fuel-rounding" | "unreadable" | "possible-duplicate";
+  kind: "missing-amount" | "wrong-subtotal" | "fuel-rounding" | "unreadable" | "possible-duplicate" | "discount";
   detail: string;
 }
 
@@ -83,6 +85,15 @@ function isoDate(v: ExcelJSNS.CellValue): string | null {
   }
   if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
   return null;
+}
+
+/** A "DISCOUNT n%" row: the workbook records the discount VALUE (positive) and
+ *  puts the block's NET total in col H. It is an adjustment, not a purchase —
+ *  the import stores it as a negative line so every sum equals what was paid.
+ *  (Brand names like "LESSO" don't match: anchored to a whole-word DISCOUNT,
+ *  and only on a row with no unit price — real items always have one.) */
+export function isDiscountParticulars(particulars: string, unitPrice: number): boolean {
+  return /^discount\b/i.test(particulars.trim()) && unitPrice === 0;
 }
 
 /** Read the legacy workbook (File from an <input type="file">). */
@@ -147,6 +158,19 @@ export async function readPurchasesFile(file: File): Promise<ParsedLedger> {
     // An unreadable-receipt line is NOT attributable to the block above it
     // (the original file's own subtotal SUM(G14:G16) excludes row 17): keep it
     // as its own entry with no supplier/invoice rather than forward-filling.
+    // A DISCOUNT row in the legacy layout stores the discount VALUE (positive)
+    // and the block's NET total in H — store it as a negative line instead, so
+    // the block sums to what was actually paid and col H checks out.
+    const discount = isDiscountParticulars(particulars, price ?? 0);
+    let stored = amount;
+    if (discount && colSubtotal !== 0 && amount !== null && amount > 0) {
+      stored = -amount;
+      repairs.push({
+        row: r,
+        kind: "discount",
+        detail: `“${particulars}” — kept as an adjustment: imported as −${amount.toFixed(2)} so the block totals what was actually paid (net in col H)`,
+      });
+    }
     const line: ImportedLine = {
       row: r,
       date: curDate,
@@ -156,11 +180,12 @@ export async function readPurchasesFile(file: File): Promise<ParsedLedger> {
       particulars,
       unitPrice: price ?? 0,
       quantity: qty ?? 1,
-      amountStored: amount,
+      amountStored: stored,
       receiptQuality: unreadable ? "unreadable" : curSi === "" || curSi === "N/A" ? "no-invoice" : "ok",
+      discount,
     };
     lines.push(line);
-    if (amount !== null) storedTotal += amount;
+    if (stored !== null) storedTotal += stored;
 
     if (amount === null && price !== null) {
       repairs.push({
@@ -226,6 +251,7 @@ export async function readPurchasesFile(file: File): Promise<ParsedLedger> {
   }
   const seen = new Map<string, number>();
   for (const l of lines) {
+    if (l.discount) continue; // discount rows recur by nature, never duplicates
     const k = `${l.particulars}|${l.unitPrice}|${l.quantity}`;
     const prev = seen.get(k);
     if (prev !== undefined) {

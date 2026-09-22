@@ -7,7 +7,7 @@ import {
 } from "../lib/queries";
 import { parseParticulars } from "../lib/parse";
 import { guessCategoryTarget } from "../lib/guess";
-import { readPurchasesFile } from "../lib/excel";
+import { isDiscountParticulars, readPurchasesFile } from "../lib/excel";
 import { useSheetsExport } from "../lib/sheets";
 import SheetsExportBanner from "../components/SheetsExportBanner";
 import type { ParsedLedger } from "../lib/excel";
@@ -78,6 +78,11 @@ export default function ImportPage() {
         return c;
       };
       for (const text of distinctTexts) {
+        if (isDiscountParticulars(text, 0)) {
+          // an adjustment row, not a purchase — no material, no category
+          notesFor.set(text, "import: discount — adjustment line (no material)");
+          continue;
+        }
         const m = await matchMaterial(text);
         if (m.material) {
           materialFor.set(text, m.material.id);

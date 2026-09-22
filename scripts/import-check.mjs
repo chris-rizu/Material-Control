@@ -62,6 +62,30 @@ async function buildRoundTripWorkbook() {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
+// discount workbook: the real client files record a block discount as its own
+// row — "DISCOUNT n%", the discount VALUE in AMOUNT (positive), and the block's
+// NET total in col H on that row. Two blocks, same discount text, to also prove
+// the duplicate scan ignores adjustment rows.
+async function buildDiscountWorkbook() {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Sheet1");
+  ws.getCell("A1").value = "PURCHASES";
+  ["DATE", "INVOICE/RECEIPT", "SUPPLIER'S NAME", "PARTICULARS", "UNIT PRICE", "QUANTITY", "AMOUNT"]
+    .forEach((h, i) => { ws.getCell(3, i + 1).value = h; });
+  const put = (r, c, v) => { if (v !== null && v !== undefined) ws.getCell(r, c).value = v; };
+  // block 1 — items sum 6,000; DISCOUNT 30% = 1,800; net 4,200 in H on its row
+  put(4, 1, new Date(2026, 8, 10)); put(4, 2, "SI# 22565"); put(4, 3, "CEBU LUCKY MACHINERY, INC.");
+  put(4, 4, "PVC PIPE 4"); put(4, 5, 2000); put(4, 6, 2); put(4, 7, 4000);
+  put(5, 4, "PVC ELBOW 3X90"); put(5, 5, 2000); put(5, 6, 1); put(5, 7, 2000);
+  put(5, 8, 6000); // gross subtotal on the last ITEM row
+  put(6, 4, "DISCOUNT 30%"); put(6, 7, 1800); put(6, 8, 4200); // net on the discount row
+  // block 2 — item 500; DISCOUNT 20% = 100; net 400
+  put(8, 1, new Date(2026, 8, 11)); put(8, 2, "SI# 22566"); put(8, 3, "CEBU LUCKY MACHINERY, INC.");
+  put(8, 4, "CEMENT RIVIERA"); put(8, 5, 250); put(8, 6, 2); put(8, 7, 500);
+  put(9, 4, "DISCOUNT 20%"); put(9, 7, 100); put(9, 8, 400);
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
 const json = (body, status = 200) => ({
   status, contentType: "application/json",
   headers: { "access-control-allow-origin": "*" },
@@ -326,6 +350,57 @@ ok("round trip keeps the PROJECT on every line (forward-filled where blank)",
 ok("round trip re-creates the project catalog entries",
    writes.slice(w8).filter((w) => w.path.includes("/rest/v1/projects"))
      .map((w) => w.body?.name).sort().join("|") === "SITE A|SITE B");
+
+// ---- discounts: "DISCOUNT n%" rows become negative adjustment lines ----------
+const wDisc = writes.length;
+await page.setInputFiles('input[type="file"]', {
+  name: "PURCHASES (3).xlsx",
+  mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  buffer: await buildDiscountWorkbook(),
+});
+await page.waitForSelector(".imp-stats", { timeout: 10000 });
+const statsD = (await page.locator(".imp-stat .v").allTextContents()).map((x) => x.trim());
+ok("discount file: 5 lines / 2 blocks parsed", statsD[0] === "5" && statsD[1] === "2", JSON.stringify(statsD));
+ok("discount file totals are NET of discounts (4,600.00)",
+   statsD[2]?.includes("4,600.00") && statsD[3]?.includes("4,600.00"), JSON.stringify(statsD));
+
+const chipsD = (await page.locator(".chip").allTextContents()).map((s) => s.trim());
+ok("both discount rows flagged, no wrong-subtotal, no false duplicate",
+   chipsD.filter((c) => c === "discount").length === 2 &&
+   !chipsD.includes("wrong-subtotal") && !chipsD.includes("possible-duplicate"),
+   JSON.stringify(chipsD));
+
+// block 1: lines sum 6,000 − 1,800 = 4,200 = col H → no "≠" flag
+const discCells = await page
+  .locator("table:has(th:text('Old subtotal')) tbody tr").first().locator("td").allTextContents();
+ok("discount block sums to its col-H net (4,200.00, no mismatch flag)",
+   discCells[4]?.includes("4,200.00") && discCells[5]?.includes("4,200.00") &&
+   discCells[5]?.includes("≠") === false,
+   JSON.stringify(discCells));
+
+await page.locator('button:has-text("Import 5 lines into the database")').click();
+await page.waitForSelector(".banner.ok", { timeout: 20000 });
+const discRows = writes.slice(wDisc).filter((w) => w.path.includes("/rest/v1/purchases"))
+  .map((w) => w.body).flat();
+const discLine = discRows.find((x) => x.particulars_raw === "DISCOUNT 30%");
+ok("discount stored as a NEGATIVE line (−1,800, receipt truth)",
+   discLine?.amount === -1800 && discLine?.unit_price === 0 && discLine?.quantity === 1 &&
+   discLine?.amount_source === "manual",
+   JSON.stringify(discLine));
+ok("discount gets NO material and NO category (adjustment, not a purchase)",
+   discLine?.material_id === null && discLine?.category_id === null &&
+   String(discLine?.notes ?? "").includes("discount"),
+   JSON.stringify([discLine?.material_id, discLine?.category_id, discLine?.notes]));
+const discMats = writes.slice(wDisc).filter((w) => w.path.includes("/rest/v1/materials"))
+  .map((w) => w.body);
+ok("no material created for any DISCOUNT text (3 real items only)",
+   discMats.length === 3 && !discMats.some((m) => /discount/i.test(m?.type ?? "")),
+   JSON.stringify(discMats.map((m) => m.type)));
+const discBatch = writes.slice(wDisc).filter((w) => w.path.includes("/import_batches"))
+  .map((w) => w.body);
+ok("batch recorded at the NET total (4,600)",
+   discBatch[0]?.line_count === 5 && Number(discBatch[0]?.grand_total) === 4600,
+   JSON.stringify(discBatch));
 
 console.log(results.join("\n"));
 await browser.close();
